@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dhruva — Run Dashboard</title>
+    <style>
+        body {
+          background: #0b1420;
+          color: #e7edf3;
+          font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+          margin: 0;
+          padding: 24px;
+        }
+        h1 { font-weight: 400; font-size: 22px; margin-bottom: 4px; }
+        .sub { color: #93a4b8; font-size: 14px; margin-bottom: 20px; }
+        input[type=file] { margin-bottom: 20px; }
+        .panel {
+          background: #101d2e;
+          border: 1px solid #223449;
+          border-radius: 10px;
+          padding: 16px;
+          margin-bottom: 16px;
+        }
+        .panel h2 { font-size: 15px; color: #4cd3c2; margin: 0 0 10px; font-weight: 600; }
+        svg { width: 100%; height: auto; background: #0b1420; border-radius: 6px; }
+        .truth-line { stroke: #4cd3c2; stroke-width: 2; fill: none; }
+        .pred-line { stroke: #f3a94e; stroke-width: 2; stroke-dasharray: 6,4; fill: none; }
+        .conf-circle { fill: rgba(76,211,194,0.15); stroke: #4cd3c2; stroke-width: 1; }
+        #driftChart { width: 100%; height: 220px; background: #0b1420; border-radius: 6px; }
+        .scrubber { width: 100%; margin-top: 12px; }
+        .legend { font-size: 12px; color: #93a4b8; margin-top: 8px; }
+        .legend span { margin-right: 16px; }
+    </style>
+</head>
+<body>
+
+<h1>Dhruva — Run Dashboard</h1>
+<p class="sub">Load a run file to see truth vs. prediction and drift over time.</p>
+
+<input type="file" id="fileInput" accept=".json">
+
+<!-- ===== PANEL 1: MAP ===== -->
+<div class="panel">
+    <h2>Truth vs. Predicted Path</h2>
+    <svg id="mapSvg" viewBox="0 0 800 500"></svg>
+    <input type="range" id="scrubber" class="scrubber" min="0" max="100" value="100">
+    <div class="legend">
+        <span style="color:#4cd3c2">— Truth</span>
+        <span style="color:#f3a94e">- - Predicted</span>
+        <span style="color:#4cd3c2">◯ Confidence radius</span>
+    </div>
+</div>
+
+<!-- ===== PANEL 2: DRIFT CHART ===== -->
+<div class="panel">
+    <h2>Drift Over Time</h2>
+    <canvas id="driftChart"></canvas>
+    <div class="legend">
+        <span style="color:#4cd3c2">Drift %</span>
+        <span style="color:#e8636c">— 10% ISRO limit</span>
+    </div>
+</div>
+
+<!-- ===== PANEL 3: STATUS STRIP ===== -->
+<div class="panel" id="statusPanel">
+    <h2>Status</h2>
+    <div id="statusGrid" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:14px;">
+        <div>Mode: <span id="stMode" style="color:#4cd3c2">—</span></div>
+        <div>Vehicle: <span id="stVehicle" style="color:#4cd3c2">—</span></div>
+        <div>Terrain: <span id="stTerrain" style="color:#4cd3c2">—</span></div>
+        <div>Speed: <span id="stSpeed" style="color:#4cd3c2">—</span></div>
+        <div>Distance since fix: <span id="stDistFix" style="color:#4cd3c2">—</span></div>
+        <div>Confidence radius: <span id="stConf" style="color:#4cd3c2">—</span></div>
+    </div>
+</div>
+
+<!-- ===== PANEL 4: VERDICT ===== -->
+<div class="panel" id="verdictPanel">
+    <h2>Verdict</h2>
+    <div style="display:flex; align-items:center; gap:20px;">
+        <div id="verdictBanner" style="font-size:28px; font-weight:700; padding:10px 22px; border-radius:8px;">—</div>
+        <div style="font-size:14px; color:#93a4b8;">
+            Final drift: <span id="stFinalDrift" style="color:#e7edf3">—</span><br>
+            ISRO limit: 10%
+        </div>
+    </div>
+</div>
+
+<script>
+    let runData = null;
+
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        runData = JSON.parse(ev.target.result);
+        document.getElementById('scrubber').max = runData.samples.length - 1;
+        document.getElementById('scrubber').value = runData.samples.length - 1;
+        drawMap(runData.samples.length - 1);
+        drawDriftChart();
+        drawStatus(runData.samples.length - 1);
+        drawVerdict();
+      };
+      reader.readAsText(file);
+    });
+
+    document.getElementById('scrubber').addEventListener('input', (e) => {
+      if (runData) {
+        const idx = parseInt(e.target.value);
+        drawMap(idx);
+        drawStatus(idx);
+      }
+    });
+
+    // ---- PANEL 1: map ----
+    function drawMap(upToIndex) {
+      if (!runData) return;
+      const samples = runData.samples.slice(0, upToIndex + 1);
+      const svg = document.getElementById('mapSvg');
+      svg.innerHTML = '';
+
+      const allX = samples.flatMap(s => [s.truth[0], s.pred[0]]);
+      const allY = samples.flatMap(s => [s.truth[1], s.pred[1]]);
+      const minX = Math.min(...allX), maxX = Math.max(...allX);
+      const minY = Math.min(...allY), maxY = Math.max(...allY);
+      const pad = 40;
+      const scaleX = (x) => pad + (x - minX) / (maxX - minX + 1e-6) * (800 - 2 * pad);
+      const scaleY = (y) => 500 - (pad + (y - minY) / (maxY - minY + 1e-6) * (500 - 2 * pad));
+
+      const truthPts = samples.map(s => `${scaleX(s.truth[0])},${scaleY(s.truth[1])}`).join(' ');
+      const predPts = samples.map(s => `${scaleX(s.pred[0])},${scaleY(s.pred[1])}`).join(' ');
+
+      svg.innerHTML += `<polyline class="truth-line" points="${truthPts}" />`;
+      svg.innerHTML += `<polyline class="pred-line" points="${predPts}" />`;
+
+      const last = samples[samples.length - 1];
+      if (last) {
+        const cx = scaleX(last.pred[0]), cy = scaleY(last.pred[1]);
+        const r = Math.max((last.sigma_m || 2) * 2, 3);
+        svg.innerHTML += `<circle class="conf-circle" cx="${cx}" cy="${cy}" r="${r}" />`;
+      }
+    }
+
+    // ---- PANEL 2: drift chart ----
+    function drawDriftChart() {
+      if (!runData) return;
+      const canvas = document.getElementById('driftChart');
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = 220 * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      const w = canvas.clientWidth, h = 220;
+      ctx.clearRect(0, 0, w, h);
+
+      const samples = runData.samples;
+      const drifts = samples.map(s => {
+        const dx = s.truth[0] - s.pred[0], dy = s.truth[1] - s.pred[1];
+        const errM = Math.sqrt(dx * dx + dy * dy);
+        const distTravelled = Math.sqrt(s.truth[0] ** 2 + s.truth[1] ** 2) || 1;
+        return (errM / distTravelled) * 100;
+      });
+      const maxDrift = Math.max(...drifts, 12);
+
+      const px = (i) => 30 + (i / (samples.length - 1)) * (w - 50);
+      const py = (v) => h - 20 - (v / maxDrift) * (h - 40);
+
+      ctx.strokeStyle = '#e8636c';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(30, py(10));
+      ctx.lineTo(w - 20, py(10));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.strokeStyle = '#4cd3c2';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      drifts.forEach((d, i) => {
+        const x = px(i), y = py(d);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    // ---- PANEL 3: status strip ----
+    function drawStatus(index) {
+      if (!runData) return;
+      const s = runData.samples[index];
+      if (!s) return;
+
+      document.getElementById('stMode').textContent =
+        s.terrain === 'unknown' ? 'GNSS' : (s.speed_mps > 0 || s.terrain ? 'Dead Reckoning' : 'GNSS');
+      document.getElementById('stVehicle').textContent =
+        runData.vehicle ? `${runData.vehicle.class} (${Math.round(runData.vehicle.confidence * 100)}%)` : 'N/A';
+      document.getElementById('stTerrain').textContent = s.terrain || 'N/A';
+      document.getElementById('stSpeed').textContent = (s.speed_mps ?? 0).toFixed(1) + ' m/s';
+      document.getElementById('stConf').textContent = (s.sigma_m ?? 0).toFixed(1) + ' m';
+
+      const bl = runData.blackout;
+      const distSinceFix = bl && s.t >= bl.start_s
+        ? ((bl.distance_m || 0) * ((s.t - bl.start_s) / (bl.end_s - bl.start_s))).toFixed(1)
+        : '0.0';
+      document.getElementById('stDistFix').textContent = distSinceFix + ' m';
+    }
+
+    // ---- PANEL 4: verdict ----
+    function drawVerdict() {
+      if (!runData || !runData.metrics) return;
+      const m = runData.metrics;
+      document.getElementById('stFinalDrift').textContent = m.drift_pct.toFixed(1) + '%';
+
+      const banner = document.getElementById('verdictBanner');
+      if (m.passes_isro) {
+        banner.textContent = 'PASS';
+        banner.style.background = 'rgba(76,211,194,0.15)';
+        banner.style.color = '#4cd3c2';
+        banner.style.border = '1px solid #4cd3c2';
+      } else {
+        banner.textContent = 'FAIL';
+        banner.style.background = 'rgba(232,99,108,0.15)';
+        banner.style.color = '#e8636c';
+        banner.style.border = '1px solid #e8636c';
+      }
+    }
+</script>
+
+</body>
+</html>
