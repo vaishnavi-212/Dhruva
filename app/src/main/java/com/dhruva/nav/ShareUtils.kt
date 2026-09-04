@@ -1,7 +1,5 @@
 package com.dhruva.nav
 
-package com.dhruva.nav
-
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
