@@ -18,6 +18,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Dhruva">
 
+        <service
+            android:name=".RecordingService"
+            android:foregroundServiceType="location" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
