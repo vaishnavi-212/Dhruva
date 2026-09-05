@@ -48,6 +48,7 @@
         <span style="color:#4cd3c2">— Truth</span>
         <span style="color:#f3a94e">- - Predicted</span>
         <span style="color:#4cd3c2">◯ Confidence radius</span>
+        <span style="color:#f3a94e">● Detected landmark</span>
     </div>
 </div>
 
@@ -134,6 +135,30 @@
       svg.innerHTML += `<polyline class="truth-line" points="${truthPts}" />`;
       svg.innerHTML += `<polyline class="pred-line" points="${predPts}" />`;
 
+      // landmarks: real field data only gives {t, snr, kind} — no position — so we
+      // find the nearest sample by timestamp and borrow its truth position
+      const currentT = samples[samples.length - 1]?.t ?? 0;
+      const landmarks = (runData.landmarks || []).filter(l => l.t <= currentT);
+
+      landmarks.forEach(lm => {
+        let px, py;
+        if (lm.pos) {
+          px = lm.pos[0]; py = lm.pos[1];
+        } else {
+          let nearest = samples[0];
+          let best = Infinity;
+          for (const s of samples) {
+            const diff = Math.abs(s.t - lm.t);
+            if (diff < best) { best = diff; nearest = s; }
+          }
+          px = nearest.truth[0]; py = nearest.truth[1];
+        }
+        const cx = scaleX(px), cy = scaleY(py);
+        const matched = lm.matched === true || lm.kind === 'detected';
+        const color = matched ? '#f3a94e' : '#93a4b8';
+        svg.innerHTML += `<circle cx="${cx}" cy="${cy}" r="4" fill="${color}" stroke="#0b1420" stroke-width="1"><title>${lm.type || lm.kind || 'landmark'} @ t=${lm.t}s</title></circle>`;
+      });
+
       const last = samples[samples.length - 1];
       if (last) {
         const cx = scaleX(last.pred[0]), cy = scaleY(last.pred[1]);
@@ -155,17 +180,27 @@
       ctx.clearRect(0, 0, w, h);
 
       const samples = runData.samples;
-      const drifts = samples.map(s => {
-        const dx = s.truth[0] - s.pred[0], dy = s.truth[1] - s.pred[1];
-        const errM = Math.sqrt(dx * dx + dy * dy);
-        const distTravelled = Math.sqrt(s.truth[0] ** 2 + s.truth[1] ** 2) || 1;
-        return (errM / distTravelled) * 100;
+
+      // cumulative distance actually travelled along the TRUE path (arc length),
+      // not straight-line distance from the origin — this matches how ISRO's
+      // own drift_pct in metrics is computed, and matters a lot on curvy roads
+      let cumDist = 0;
+      const drifts = samples.map((s, i) => {
+        if (i > 0) {
+          const prev = samples[i - 1];
+          const dx = s.truth[0] - prev.truth[0], dy = s.truth[1] - prev.truth[1];
+          cumDist += Math.sqrt(dx * dx + dy * dy);
+        }
+        const ex = s.truth[0] - s.pred[0], ey = s.truth[1] - s.pred[1];
+        const errM = Math.sqrt(ex * ex + ey * ey);
+        return (errM / (cumDist || 1)) * 100;
       });
       const maxDrift = Math.max(...drifts, 12);
 
       const px = (i) => 30 + (i / (samples.length - 1)) * (w - 50);
       const py = (v) => h - 20 - (v / maxDrift) * (h - 40);
 
+      // 10% ISRO limit line
       ctx.strokeStyle = '#e8636c';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -174,6 +209,7 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
+      // our computed curve
       ctx.strokeStyle = '#4cd3c2';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -182,6 +218,16 @@
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
+
+      // cross-check against the pipeline's own authoritative number, if present
+      if (runData.metrics && typeof runData.metrics.drift_pct === 'number') {
+        ctx.fillStyle = '#93a4b8';
+        ctx.font = '12px -apple-system, sans-serif';
+        ctx.fillText(
+          `Pipeline-measured final drift: ${runData.metrics.drift_pct.toFixed(2)}%`,
+          30, 16
+        );
+      }
     }
 
     // ---- PANEL 3: status strip ----
