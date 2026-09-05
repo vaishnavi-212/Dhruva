@@ -14,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
 import java.io.File
+import kotlin.jvm.java
 
 class MainActivity : AppCompatActivity() {
 
@@ -31,6 +32,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvHz: TextView
     private lateinit var tvElapsed: TextView
     private lateinit var tvDistance: TextView
+
+    private lateinit var btnNavigate: Button
 
     private var isRecording = false
     private var recordingStartMs = 0L
@@ -59,6 +62,7 @@ class MainActivity : AppCompatActivity() {
 
         btnStartStop = findViewById(R.id.btnStartStop)
         btnShare = findViewById(R.id.btnShare)
+        btnNavigate = findViewById(R.id.btnNavigate)
         tvGpsStatus = findViewById(R.id.tvGpsStatus)
         tvHz = findViewById(R.id.tvHz)
         tvElapsed = findViewById(R.id.tvElapsed)
@@ -70,6 +74,9 @@ class MainActivity : AppCompatActivity() {
 
         btnShare.setOnClickListener {
             finishedRunDir?.let { shareRun(this, it) }
+        }
+        btnNavigate.setOnClickListener {
+            startActivity(Intent(this, NavigateActivity::class.java))
         }
     }
 

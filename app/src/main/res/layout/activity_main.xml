@@ -52,4 +52,11 @@
         android:text="Share Last Run"
         android:enabled="false" />
 
+    <Button
+        android:id="@+id/btnNavigate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Open Navigate Screen"
+        android:layout_marginTop="12dp" />
+
 </LinearLayout>
