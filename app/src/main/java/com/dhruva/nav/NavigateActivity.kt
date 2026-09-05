@@ -151,9 +151,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         if (radiusM > 0.0) {
             val circle = Polygon(mapView)
             circle.points = Polygon.pointsAsCircle(point, radiusM)
-            circle.fillColor = 0x334CD3C2   // translucent teal
-            circle.strokeColor = 0xFF4CD3C2.toInt()
-            circle.strokeWidth = 2f
+            circle.fillPaint.color = 0x334CD3C2
+            circle.outlinePaint.color = 0xFF4CD3C2.toInt()
+            circle.outlinePaint.strokeWidth = 2f
             mapView.overlays.add(circle)
             confCircle = circle
         }
