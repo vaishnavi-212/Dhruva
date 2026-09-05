@@ -23,6 +23,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
+import android.widget.Button
 
 class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
@@ -30,6 +31,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var tvMode: TextView
     private lateinit var switchBlackout: Switch
 
+    private lateinit var btnMapStandard: Button
+    private lateinit var btnMapTerrain: Button
     private lateinit var sm: SensorManager
     private var gyro: Sensor? = null
     private var lastGyroTimeNanos = 0L
@@ -67,6 +70,17 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         switchBlackout.setOnCheckedChangeListener { _, isChecked ->
             blackoutOn = isChecked
             tvMode.text = if (isChecked) "Mode: DEAD RECKONING (simulated)" else "Mode: GNSS"
+        }
+        btnMapStandard = findViewById(R.id.btnMapStandard)
+        btnMapTerrain = findViewById(R.id.btnMapTerrain)
+
+        btnMapStandard.setOnClickListener {
+            mapView.setTileSource(TileSourceFactory.MAPNIK)
+            mapView.invalidate()
+        }
+        btnMapTerrain.setOnClickListener {
+            mapView.setTileSource(TileSourceFactory.OpenTopo)
+            mapView.invalidate()
         }
 
         startGpsUpdates()
@@ -151,9 +165,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         if (radiusM > 0.0) {
             val circle = Polygon(mapView)
             circle.points = Polygon.pointsAsCircle(point, radiusM)
-            circle.fillColor = 0x334CD3C2   // translucent teal
-            circle.strokeColor = 0xFF4CD3C2.toInt()
-            circle.strokeWidth = 2f
+            circle.fillPaint.color = 0x334CD3C2
+            circle.outlinePaint.color = 0xFF4CD3C2.toInt()
+            circle.outlinePaint.strokeWidth = 2f
             mapView.overlays.add(circle)
             confCircle = circle
         }

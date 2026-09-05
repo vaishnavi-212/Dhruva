@@ -4,6 +4,27 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="8dp">
+
+        <Button
+            android:id="@+id/btnMapStandard"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Standard" />
+
+        <Button
+            android:id="@+id/btnMapTerrain"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Terrain" />
+    </LinearLayout>
+
     <org.osmdroid.views.MapView
         android:id="@+id/mapView"
         android:layout_width="match_parent"
@@ -24,7 +45,6 @@
             android:layout_weight="1"
             android:text="Mode: GNSS"
             android:textSize="16sp" />
-
         <Switch
             android:id="@+id/switchBlackout"
             android:layout_width="wrap_content"
