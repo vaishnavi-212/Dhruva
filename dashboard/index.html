@@ -180,27 +180,24 @@
       ctx.clearRect(0, 0, w, h);
 
       const samples = runData.samples;
+      const WARMUP_M = 200;   // drift % is meaningless before the vehicle has gone anywhere
 
-      // cumulative distance actually travelled along the TRUE path (arc length),
-      // not straight-line distance from the origin — this matches how ISRO's
-      // own drift_pct in metrics is computed, and matters a lot on curvy roads
       let cumDist = 0;
-      const drifts = samples.map((s, i) => {
-        if (i > 0) {
-          const prev = samples[i - 1];
-          const dx = s.truth[0] - prev.truth[0], dy = s.truth[1] - prev.truth[1];
-          cumDist += Math.sqrt(dx * dx + dy * dy);
-        }
+      const points = [];
+      for (let i = 1; i < samples.length; i++) {
+        const prev = samples[i - 1], s = samples[i];
+        const dx = s.truth[0] - prev.truth[0], dy = s.truth[1] - prev.truth[1];
+        cumDist += Math.sqrt(dx * dx + dy * dy);
+        if (cumDist < WARMUP_M) continue;   // skips the divide-by-near-zero spike at the start
         const ex = s.truth[0] - s.pred[0], ey = s.truth[1] - s.pred[1];
-        const errM = Math.sqrt(ex * ex + ey * ey);
-        return (errM / (cumDist || 1)) * 100;
-      });
-      const maxDrift = Math.max(...drifts, 12);
+        const err = Math.sqrt(ex * ex + ey * ey);
+        points.push({ i, drift: (err / cumDist) * 100 });
+      }
 
+      const maxDrift = 35;   // fixed 0-35% axis so the 10% ISRO line stays legible
       const px = (i) => 30 + (i / (samples.length - 1)) * (w - 50);
-      const py = (v) => h - 20 - (v / maxDrift) * (h - 40);
+      const py = (v) => h - 20 - (Math.min(v, maxDrift) / maxDrift) * (h - 40);
 
-      // 10% ISRO limit line
       ctx.strokeStyle = '#e8636c';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -209,25 +206,21 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // our computed curve
       ctx.strokeStyle = '#4cd3c2';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      drifts.forEach((d, i) => {
-        const x = px(i), y = py(d);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      points.forEach((p, idx) => {
+        const x = px(p.i), y = py(p.drift);
+        if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
 
-      // cross-check against the pipeline's own authoritative number, if present
+      ctx.fillStyle = '#93a4b8';
+      ctx.font = '12px -apple-system, sans-serif';
       if (runData.metrics && typeof runData.metrics.drift_pct === 'number') {
-        ctx.fillStyle = '#93a4b8';
-        ctx.font = '12px -apple-system, sans-serif';
-        ctx.fillText(
-          `Pipeline-measured final drift: ${runData.metrics.drift_pct.toFixed(2)}%`,
-          30, 16
-        );
+        ctx.fillText(`Pipeline-measured final drift: ${runData.metrics.drift_pct.toFixed(2)}%`, 30, 16);
       }
+      ctx.fillText('First 200 m omitted (warm-up)', 30, h - 4);
     }
 
     // ---- PANEL 3: status strip ----
