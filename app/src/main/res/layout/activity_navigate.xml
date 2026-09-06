@@ -42,6 +42,17 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
+    <TextView
+        android:id="@+id/tvErrorLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="0 m apart"
+        android:textColor="@color/dhruva_amber"
+        android:textSize="13sp"
+        android:gravity="center"
+        android:background="@color/dhruva_surface"
+        android:padding="6dp" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -66,6 +77,90 @@
             android:text="Simulate GPS loss"
             android:textColor="@color/dhruva_text_dim"
             android:textSize="12sp" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/summaryCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_card"
+        android:padding="18dp"
+        android:visibility="gone"
+        android:layout_margin="12dp">
+
+        <TextView
+            android:id="@+id/summaryVerdict"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="—"
+            android:textColor="@color/dhruva_teal"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="10dp" />
+
+        <TextView
+            android:id="@+id/summaryDistance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Distance: —"
+            android:textColor="@color/dhruva_text"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/summaryError"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Final error: —"
+            android:textColor="@color/dhruva_text"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/summaryDrift"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Drift: —"
+            android:textColor="@color/dhruva_text"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/summarySpeed"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Mean speed: —"
+            android:textColor="@color/dhruva_text"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/summaryConf"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Confidence: —"
+            android:textColor="@color/dhruva_text"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/summaryHz"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="IMU rate: —"
+            android:textColor="@color/dhruva_text_dim"
+            android:textSize="13sp"
+            android:layout_marginBottom="14dp" />
+
+        <Button
+            android:id="@+id/btnFinishRun"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="Finish Run"
+            android:textColor="@color/dhruva_bg"
+            android:background="@drawable/bg_button_primary" />
 
     </LinearLayout>
 
