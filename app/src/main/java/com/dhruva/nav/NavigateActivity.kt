@@ -6,6 +6,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.location.Location
 import android.os.Bundle
 import android.os.Looper
 import android.view.View
@@ -29,12 +30,20 @@ import org.osmdroid.views.overlay.Polygon
 
 class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
+    // GPS jitter fix: a fix must move further than this, capped between
+    // 3m and 8m regardless of the phone's reported accuracy, before we
+    // treat it as real movement.
+    private val MIN_MOVEMENT_M = 3f
+    private val MAX_NOISE_FLOOR_M = 8f
+    private var lastAcceptedGps: Location? = null
+
     private lateinit var mapView: MapView
     private lateinit var tvMode: TextView
     private lateinit var switchBlackout: Switch
     private lateinit var btnMapStandard: Button
     private lateinit var btnMapTerrain: Button
     private lateinit var tvErrorLabel: TextView
+    private lateinit var switchRoadBind: Switch
 
     private lateinit var summaryCard: LinearLayout
     private lateinit var summaryVerdict: TextView
@@ -54,6 +63,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var lon0: Double? = null
     private var deadReckoner: DeadReckoner? = null
     private var blackoutOn = false
+    private var roadBindOn = false
+    private var lastKnownSpeedMps = 0.0
+
+    private val road: RoadBinder? by lazy {
+        try { RoadBinder.fromAssets(this) } catch (e: Exception) { null }
+    }
 
     private lateinit var dotMarker: Marker
     private var confCircle: Polygon? = null
@@ -79,6 +94,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         btnMapStandard = findViewById(R.id.btnMapStandard)
         btnMapTerrain = findViewById(R.id.btnMapTerrain)
         tvErrorLabel = findViewById(R.id.tvErrorLabel)
+        switchRoadBind = findViewById(R.id.switchRoadBind)
 
         summaryCard = findViewById(R.id.summaryCard)
         summaryVerdict = findViewById(R.id.summaryVerdict)
@@ -119,6 +135,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             blackoutOn = isChecked
             tvMode.text = if (isChecked) "Mode: DEAD RECKONING (simulated)" else "Mode: GNSS"
             paths.setBlackout(isChecked)
+        }
+
+        switchRoadBind.setOnCheckedChangeListener { _, isChecked ->
+            roadBindOn = isChecked
         }
 
         btnFinishRun.setOnClickListener {
@@ -167,10 +187,28 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
 
-                // Guide 3 add-on: keep feeding the truth line even during a
-                // simulated blackout — the comparison is the whole point
-                paths.addTruth(loc.latitude, loc.longitude)
-                gpsPoints.add(loc.latitude to loc.longitude)
+                // GPS jitter fix: only treat this fix as real movement if it moved
+                // further than a capped noise floor. Standing still with poor
+                // accuracy no longer wanders, but real short walks still register.
+                val anchor = lastAcceptedGps
+                val movedM = anchor?.distanceTo(loc) ?: Float.MAX_VALUE
+                val noiseFloor = loc.accuracy.coerceIn(MIN_MOVEMENT_M, MAX_NOISE_FLOOR_M)
+                val isRealMovement = anchor == null || movedM > noiseFloor
+
+                if (isRealMovement) {
+                    lastAcceptedGps = loc
+                    lastKnownSpeedMps = loc.speed.toDouble()
+
+                    // Guide 3 add-on: keep feeding the truth line even during a
+                    // simulated blackout — the comparison is the whole point
+                    paths.addTruth(loc.latitude, loc.longitude)
+                    gpsPoints.add(loc.latitude to loc.longitude)
+
+                    // Section 10 add-on: anchor road binding to the last good fix
+                    if (roadBindOn) {
+                        road?.start(loc.latitude, loc.longitude)
+                    }
+                }
 
                 if (lat0 == null) {
                     // first fix ever — this becomes the map's local origin
@@ -182,12 +220,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
                 if (deadReckoner == null) {
                     deadReckoner = DeadReckoner(heading = 0.0, speed = loc.speed.toDouble(), x = x, y = y)
-                } else {
+                } else if (isRealMovement) {
                     deadReckoner!!.onGnssFix(x, y, loc.speed.toDouble())
                 }
 
                 // only let a real fix move the dot when we are NOT simulating a blackout
-                if (!blackoutOn) {
+                if (!blackoutOn && isRealMovement) {
                     placeDot(loc.latitude, loc.longitude, isBlue = true, radiusM = 0.0)
                 }
             }
@@ -208,9 +246,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
 
-        val gyroZ = event.values[2].toDouble()
-        val (x, y, radius) = dr.step(gyroZ, dt)
-        val (lat, lon) = toLatLon(x, y, o0, o1)
+        // Section 10: use road-bound position when the toggle is on and the
+        // binder is available, otherwise fall back to free dead reckoning —
+        // switching the toggle off must behave exactly as before
+        val (lat, lon, radius) = if (roadBindOn && road != null) {
+            val (rlat, rlon) = road!!.advance(lastKnownSpeedMps, dt)
+            Triple(rlat, rlon, 5.0)   // road-bound position is tight by definition
+        } else {
+            val gyroZ = event.values[2].toDouble()
+            val (x, y, r) = dr.step(gyroZ, dt)
+            val (flat, flon) = toLatLon(x, y, o0, o1)
+            Triple(flat, flon, r)
+        }
         placeDot(lat, lon, isBlue = false, radiusM = radius)
 
         // Guide 3 add-on: predicted track + live divergence label
