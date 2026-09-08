@@ -32,7 +32,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
     // GPS jitter fix: a fix must move further than this, capped between
     // 3m and 8m regardless of the phone's reported accuracy, before we
-    // treat it as real movement.
+    // treat it as real movement. Using raw accuracy (can be 15m+) as the
+    // floor was the earlier bug — it blocked all short real movement too.
+    // Longest gap between gyro samples we will integrate. At SENSOR_DELAY_GAME
+    // real gaps are ~20 ms; anything past this means the stream stalled.
+    private val MAX_STEP_S = 0.5
+
     private val MIN_MOVEMENT_M = 3f
     private val MAX_NOISE_FLOOR_M = 8f
     private var lastAcceptedGps: Location? = null
@@ -43,7 +48,6 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var btnMapStandard: Button
     private lateinit var btnMapTerrain: Button
     private lateinit var tvErrorLabel: TextView
-    private lateinit var switchRoadBind: Switch
 
     private lateinit var summaryCard: LinearLayout
     private lateinit var summaryVerdict: TextView
@@ -57,18 +61,24 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
     private lateinit var sm: SensorManager
     private var gyro: Sensor? = null
+    private var gravitySensor: Sensor? = null
     private var lastGyroTimeNanos = 0L
+
+    // Unit gravity vector in DEVICE coordinates. Needed to work out which way is
+    // actually "up" -- raw gyro z is only the vertical axis when the phone lies
+    // flat on a table, which it never is on a handlebar.
+    private val gravityUnit = floatArrayOf(0f, 0f, 1f)
+
+    // Road binding (Guide 3, Section 10)
+    private var road: RoadBinder? = null
+    private var roadBindingOn = false
+    private var lastGoodSpeedMps = 0.0
+    private lateinit var switchRoadBinding: Switch
 
     private var lat0: Double? = null
     private var lon0: Double? = null
     private var deadReckoner: DeadReckoner? = null
     private var blackoutOn = false
-    private var roadBindOn = false
-    private var lastKnownSpeedMps = 0.0
-
-    private val road: RoadBinder? by lazy {
-        try { RoadBinder.fromAssets(this) } catch (e: Exception) { null }
-    }
 
     private lateinit var dotMarker: Marker
     private var confCircle: Polygon? = null
@@ -91,10 +101,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         mapView = findViewById(R.id.mapView)
         tvMode = findViewById(R.id.tvMode)
         switchBlackout = findViewById(R.id.switchBlackout)
+        switchRoadBinding = findViewById(R.id.switchRoadBinding)
         btnMapStandard = findViewById(R.id.btnMapStandard)
         btnMapTerrain = findViewById(R.id.btnMapTerrain)
         tvErrorLabel = findViewById(R.id.tvErrorLabel)
-        switchRoadBind = findViewById(R.id.switchRoadBind)
 
         summaryCard = findViewById(R.id.summaryCard)
         summaryVerdict = findViewById(R.id.summaryVerdict)
@@ -121,6 +131,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         sm = getSystemService(SENSOR_SERVICE) as SensorManager
         gyro = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        gravitySensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
+
+        // route.json ships in assets/. It is route-specific: a file for the wrong
+        // area is worse than no file, which is why start() below is checked.
+        road = try { RoadBinder.fromAssets(this) } catch (e: Exception) { null }
 
         btnMapStandard.setOnClickListener {
             mapView.setTileSource(TileSourceFactory.MAPNIK)
@@ -135,10 +150,37 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             blackoutOn = isChecked
             tvMode.text = if (isChecked) "Mode: DEAD RECKONING (simulated)" else "Mode: GNSS"
             paths.setBlackout(isChecked)
+
+            if (isChecked) {
+                // Anchor the estimate to where we actually are, facing the way we
+                // are actually facing. Skipping this is what sent the dot east.
+                lastAcceptedGps?.let { loc ->
+                    if (loc.hasBearing()) deadReckoner?.setHeadingFromBearing(loc.bearing)
+                    paths.startPredicted(loc.latitude, loc.longitude)
+
+                    if (roadBindingOn) {
+                        val ok = road?.start(loc.latitude, loc.longitude) ?: false
+                        if (!ok) {
+                            roadBindingOn = false
+                            switchRoadBinding.isChecked = false
+                            tvErrorLabel.text = "route.json is for another area (%.0f m away)"
+                                .format(road?.snapDistanceM ?: 0.0)
+                        }
+                    }
+                }
+            }
         }
 
-        switchRoadBind.setOnCheckedChangeListener { _, isChecked ->
-            roadBindOn = isChecked
+        switchRoadBinding.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked && road == null) {
+                switchRoadBinding.isChecked = false
+                tvErrorLabel.text = "no route.json in assets"
+                return@setOnCheckedChangeListener
+            }
+            roadBindingOn = isChecked
+            if (isChecked && blackoutOn) {
+                lastAcceptedGps?.let { road?.start(it.latitude, it.longitude) }
+            }
         }
 
         btnFinishRun.setOnClickListener {
@@ -166,12 +208,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         super.onResume()
         mapView.onResume()
         gyro?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+        gravitySensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
     }
 
     override fun onPause() {
         super.onPause()
         mapView.onPause()
         sm.unregisterListener(this)
+        // MUST reset. Otherwise the next gyro event after a resume reports a dt
+        // of however long the screen was off, and speed * dt teleports the dot
+        // across the map in a single straight segment -- the runaway dashed line
+        // in the 7 Sept screenshot.
+        lastGyroTimeNanos = 0L
     }
 
     private fun startGpsUpdates() {
@@ -188,7 +236,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 val loc = result.lastLocation ?: return
 
                 // GPS jitter fix: only treat this fix as real movement if it moved
-                // further than a capped noise floor. Standing still with poor
+                // further than a capped noise floor. Standing still with 15m
                 // accuracy no longer wanders, but real short walks still register.
                 val anchor = lastAcceptedGps
                 val movedM = anchor?.distanceTo(loc) ?: Float.MAX_VALUE
@@ -197,17 +245,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
                 if (isRealMovement) {
                     lastAcceptedGps = loc
-                    lastKnownSpeedMps = loc.speed.toDouble()
-
                     // Guide 3 add-on: keep feeding the truth line even during a
                     // simulated blackout — the comparison is the whole point
                     paths.addTruth(loc.latitude, loc.longitude)
                     gpsPoints.add(loc.latitude to loc.longitude)
-
-                    // Section 10 add-on: anchor road binding to the last good fix
-                    if (roadBindOn) {
-                        road?.start(loc.latitude, loc.longitude)
-                    }
                 }
 
                 if (lat0 == null) {
@@ -218,10 +259,23 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 }
                 val (x, y) = toXY(loc.latitude, loc.longitude, lat0!!, lon0!!)
 
+                // Freeze the speed the moment the blackout starts -- during one we
+                // are pretending these fixes do not exist.
+                if (!blackoutOn && loc.speed > 0.5f) lastGoodSpeedMps = loc.speed.toDouble()
+
                 if (deadReckoner == null) {
-                    deadReckoner = DeadReckoner(heading = 0.0, speed = loc.speed.toDouble(), x = x, y = y)
-                } else if (isRealMovement) {
+                    deadReckoner = DeadReckoner(
+                        heading = if (loc.hasBearing()) Math.toRadians(90.0 - loc.bearing.toDouble()) else 0.0,
+                        speed = loc.speed.toDouble(), x = x, y = y
+                    )
+                } else if (isRealMovement && !blackoutOn) {
+                    // Only while GNSS is genuinely in use. Correcting the estimate
+                    // from GPS during a "simulated blackout" makes the whole demo
+                    // meaningless -- it was doing exactly that.
                     deadReckoner!!.onGnssFix(x, y, loc.speed.toDouble())
+                    if (loc.hasBearing() && loc.speed > 1.0f) {
+                        deadReckoner!!.setHeadingFromBearing(loc.bearing)
+                    }
                 }
 
                 // only let a real fix move the dot when we are NOT simulating a blackout
@@ -233,6 +287,14 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type == Sensor.TYPE_GRAVITY) {
+            val n = Math.sqrt(
+                (event.values[0] * event.values[0] + event.values[1] * event.values[1] +
+                        event.values[2] * event.values[2]).toDouble()
+            ).toFloat()
+            if (n > 1f) for (i in 0..2) gravityUnit[i] = event.values[i] / n
+            return
+        }
         if (event.sensor.type != Sensor.TYPE_GYROSCOPE) return
         gyroSampleCount++
 
@@ -243,21 +305,33 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         if (lastGyroTimeNanos == 0L) { lastGyroTimeNanos = event.timestamp; return }
         val dt = (event.timestamp - lastGyroTimeNanos) / 1_000_000_000.0
         lastGyroTimeNanos = event.timestamp
+        // A stalled sensor stream must never be integrated as real elapsed time.
+        if (dt <= 0.0 || dt > MAX_STEP_S) return
 
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
 
-        // Section 10: use road-bound position when the toggle is on and the
-        // binder is available, otherwise fall back to free dead reckoning —
-        // switching the toggle off must behave exactly as before
-        val (lat, lon, radius) = if (roadBindOn && road != null) {
-            val (rlat, rlon) = road!!.advance(lastKnownSpeedMps, dt)
-            Triple(rlat, rlon, 5.0)   // road-bound position is tight by definition
+        // Rotation about the TRUE vertical, not the phone's z axis. Reduces to
+        // gyro z when the phone happens to be flat, and stays correct when it is
+        // not -- feeding raw z to a yaw-dependent estimator cost us 12.2% vs 8.3%
+        // drift once already (RESOURCES 8g).
+        val yawRate = (event.values[0] * gravityUnit[0] +
+                event.values[1] * gravityUnit[1] +
+                event.values[2] * gravityUnit[2]).toDouble()
+
+        val (x, y, radius) = dr.step(yawRate, dt)
+        var lat: Double; var lon: Double
+        val free = toLatLon(x, y, o0, o1)
+
+        val rb = road
+        if (roadBindingOn && rb != null && rb.bound) {
+            // Constrained to the road: the dot cannot drift sideways at all, and
+            // only how far ALONG the road can be wrong.
+            val p = rb.advance(lastGoodSpeedMps, dt)
+            lat = p.first; lon = p.second
         } else {
-            val gyroZ = event.values[2].toDouble()
-            val (x, y, r) = dr.step(gyroZ, dt)
-            val (flat, flon) = toLatLon(x, y, o0, o1)
-            Triple(flat, flon, r)
+            lat = free.first; lon = free.second
         }
+
         placeDot(lat, lon, isBlue = false, radiusM = radius)
 
         // Guide 3 add-on: predicted track + live divergence label
