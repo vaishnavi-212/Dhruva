@@ -272,6 +272,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     // Only while GNSS is genuinely in use. Correcting the estimate
                     // from GPS during a "simulated blackout" makes the whole demo
                     // meaningless -- it was doing exactly that.
+                    deadReckoner = DeadReckoner(heading = 0.0, speed = loc.speed.toDouble(), x = x, y = y)
+                } else if (isRealMovement) {
                     deadReckoner!!.onGnssFix(x, y, loc.speed.toDouble())
                     if (loc.hasBearing() && loc.speed > 1.0f) {
                         deadReckoner!!.setHeadingFromBearing(loc.bearing)
