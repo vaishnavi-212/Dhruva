@@ -46,6 +46,28 @@ class LivePathOverlay(private val map: MapView) {
     private var lastPred: GeoPoint? = null
     private var blackout = false
 
+    /**
+     * The predicted line stays EMPTY until this is called.
+     *
+     * Contract A, rule 2: "xy[0] must equal init['xy']". If the reckoner emits a
+     * position before it has been initialised from a real GNSS fix, that first
+     * point sits at whatever the default was -- and the polyline draws a single
+     * straight line from there to the real track, right across the map. It looks
+     * like the estimate ran away. It did not; it was never started.
+     *
+     * Call this once, on the first GPS fix with usable accuracy, with the same
+     * position you initialise the DeadReckoner from.
+     */
+    fun startPredicted(lat: Double, lon: Double) {
+        armed = true
+        val p = GeoPoint(lat, lon)
+        lastPred = p
+        predicted.addPoint(p)
+        map.invalidate()
+    }
+
+    private var armed = false
+
     init {
         map.overlays.add(truth)
         map.overlays.add(predicted)
@@ -60,11 +82,24 @@ class LivePathOverlay(private val map: MapView) {
     }
 
     fun addPredicted(lat: Double, lon: Double) {
+        if (!armed) return                       // not initialised yet -- drop it
         val p = GeoPoint(lat, lon)
+
+        // Safety net, not the fix: at 10 Hz nothing on a road moves 100 m between
+        // two samples. A jump that large is a bad frame, never a real position.
+        // If this ever fires, the real bug is upstream -- log it, do not live with it.
+        lastPred?.let {
+            if (it.distanceToAsDouble(p) > MAX_STEP_M) { dropped++; return }
+        }
+
         lastPred = p
         predicted.addPoint(p)
         refreshGap()
     }
+
+    /** How many impossible jumps were rejected. Should be 0. Show it while testing. */
+    var dropped = 0
+        private set
 
     fun setBlackout(on: Boolean) {
         blackout = on
@@ -81,6 +116,11 @@ class LivePathOverlay(private val map: MapView) {
         return t.distanceToAsDouble(p)
     }
 
+    companion object {
+        /** Largest believable move between two predicted samples. */
+        const val MAX_STEP_M = 100.0
+    }
+
     private fun refreshGap() {
         val t = lastTruth; val p = lastPred
         gap.setPoints(if (blackout && t != null && p != null) listOf(t, p) else emptyList())
@@ -89,7 +129,7 @@ class LivePathOverlay(private val map: MapView) {
 
     fun clear() {
         truth.setPoints(emptyList()); predicted.setPoints(emptyList()); gap.setPoints(emptyList())
-        lastTruth = null; lastPred = null
+        lastTruth = null; lastPred = null; armed = false; dropped = 0
         map.invalidate()
     }
 }
