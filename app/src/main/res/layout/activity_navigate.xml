@@ -85,7 +85,9 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:background="@color/dhruva_surface"
-        android:padding="16dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp"
         android:gravity="center_vertical">
 
         <TextView
@@ -93,11 +95,11 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Road binding"
-            android:textColor="@color/dhruva_text_dim"
-            android:textSize="13sp" />
+            android:textColor="@color/dhruva_text"
+            android:textSize="15sp" />
 
         <Switch
-            android:id="@+id/switchRoadBind"
+            android:id="@+id/switchRoadBinding"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="@color/dhruva_text_dim"
