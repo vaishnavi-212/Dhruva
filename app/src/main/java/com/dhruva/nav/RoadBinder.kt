@@ -55,7 +55,7 @@ class RoadBinder(routeJson: String) {
      * Call ONCE, with the last good GPS fix before the signal died.
      * Finds where on the road that is. Everything after is just walking along it.
      */
-    fun start(lat: Double, lon: Double) {
+    fun start(lat: Double, lon: Double): Boolean {
         val px = (lon - lon0) * mPerDegLon
         val py = (lat - lat0) * M_PER_DEG
         var bestD = Double.MAX_VALUE
@@ -65,25 +65,64 @@ class RoadBinder(routeJson: String) {
             val bx = xs[i + 1] - ax; val by = ys[i + 1] - ay
             val len2 = bx * bx + by * by
             val u = if (len2 == 0.0) 0.0
-                    else ((px - ax) * bx + (py - ay) * by).div(len2).coerceIn(0.0, 1.0)
+            else ((px - ax) * bx + (py - ay) * by).div(len2).coerceIn(0.0, 1.0)
             val qx = ax + u * bx; val qy = ay + u * by
             val d = hypot(px - qx, py - qy)
             if (d < bestD) { bestD = d; bestS = cum[i] + u * sqrt(len2) }
         }
         arcM = bestS
+        snapDistanceM = bestD
+        bound = bestD <= MAX_SNAP_M
+        return bound
     }
 
+    /** How far the start point was from the route. */
+    var snapDistanceM: Double = Double.NaN
+        private set
+
     /**
-     * Call on every step while GNSS is gone. Advances along the road and returns
-     * the new position as (lat, lon).
+     * False when the route file does not match where we actually are.
      *
-     * @param speedMps  current speed estimate (the last GPS speed is fine)
-     * @param dtS       seconds since the previous call
+     * This matters more than it sounds. On 7 Sept a ride was recorded 3.2 km away
+     * from the route the app was carrying. `start()` obediently snapped to the
+     * nearest point on that route and slid the dot along a road on the other side
+     * of town, and the screen read "2000 m apart" all the way round.
+     *
+     * When this is false: do NOT use `advance()`. Fall back to your normal free
+     * position, and show something like "route not loaded for this area".
+     * A wrong road is far worse than no road.
+     */
+    var bound: Boolean = false
+        private set
+
+    /**
+     * Call on every step. Advances along the road and returns (lat, lon).
+     *
+     * IMPORTANT -- what to pass as speedMps:
+     *   while GNSS is alive : the LIVE GPS speed, every fix. Stops then register
+     *                         on their own and the dot holds still.
+     *   after GNSS dies     : the last speed you saw before it died, held.
+     *
+     * Anything below MIN_SPEED_MPS is treated as stopped and does not advance
+     * the dot. Without this, a phone sitting on a desk creeps forward forever on
+     * GPS speed noise -- which is exactly the "it moves when we are not moving"
+     * bug.
+     *
+     * Known limit: during a blackout, with the speed frozen, a genuine stop
+     * cannot be detected. On our 7 Sept ride that injected 11 m over 31 s of
+     * stops on a 1467 m ride -- under 1%. Acceptable; do not try to fix it with
+     * accelerometer variance, we measured that and an idling engine looks
+     * identical to a moving one (std 1.75 both).
      */
     fun advance(speedMps: Double, dtS: Double): Pair<Double, Double> {
-        arcM = (arcM + max(speedMps, 0.0) * dtS).coerceIn(0.0, lengthM)
+        if (speedMps >= MIN_SPEED_MPS && !paused) {
+            arcM = (arcM + speedMps * dtS).coerceIn(0.0, lengthM)
+        }
         return at(arcM)
     }
+
+    /** Freeze the dot -- e.g. while the user is stopped at the start line. */
+    var paused: Boolean = false
 
     /** Position at a given distance along the road, as (lat, lon). */
     fun at(s: Double): Pair<Double, Double> {
@@ -102,6 +141,14 @@ class RoadBinder(routeJson: String) {
 
     companion object {
         private const val M_PER_DEG = 111320.0
+
+        /** Below this, treat the vehicle as stopped. GPS speed noise at a
+         *  standstill measured 0.10-0.25 m/s on our own runs. */
+        const val MIN_SPEED_MPS = 0.5
+
+        /** If the start point is further than this from the route, the route is
+         *  the wrong one. Our good rides sit within 50 m of their own route. */
+        const val MAX_SNAP_M = 150.0
 
         /** Load route.json from app/src/main/assets/ */
         fun fromAssets(ctx: Context, name: String = "route.json") =
