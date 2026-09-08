@@ -14,7 +14,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
 import java.io.File
-import kotlin.jvm.java
 
 class MainActivity : AppCompatActivity() {
 
@@ -142,8 +141,21 @@ class MainActivity : AppCompatActivity() {
         val fix = rec.lastFix
         if (fix != null) {
             tvGpsStatus.text = "GPS: locked, accuracy ${"%.1f".format(fix.accuracy)} m"
-            prevLocation?.let { totalDistanceM += it.distanceTo(fix) }
-            prevLocation = fix
+
+            val prev = prevLocation
+            if (prev == null) {
+                prevLocation = fix
+            } else {
+                val moved = prev.distanceTo(fix)
+                // cap accuracy's influence: never block movement above 8m,
+                // never allow jitter under 3m through — this was the bug:
+                // using raw 15m accuracy as the floor blocked all real movement
+                val noiseFloor = fix.accuracy.coerceIn(3f, 8f)
+                if (moved > noiseFloor) {
+                    totalDistanceM += moved
+                    prevLocation = fix
+                }
+            }
         } else {
             tvGpsStatus.text = "GPS: waiting for fix..."
         }
