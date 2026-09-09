@@ -226,7 +226,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 blackoutFromIndex = blackoutFromIndex
             )
             summaryVerdict.text = RunSummary.verdict(r)
-            summaryDistance.text = "Distance: %.0f m".format(r.distanceM)
+            summaryDistance.text = "Distance without GPS: %.0f m".format(r.distanceM)
             summaryError.text = "Final error: %.1f m".format(r.finalErrorM)
             summaryDrift.text = "Drift: %.1f%%".format(r.driftPct)
             summarySpeed.text = "Mean speed: %.1f km/h".format(r.meanSpeedMps * 3.6)
@@ -365,12 +365,16 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         gyroBias.observe(event.values[0], event.values[1], event.values[2], stationaryNow)
         if (gyroSampleCount % 100 == 0) {
-            tvSensorStatus.text = when {
+            val bias = when {
                 gyroBias.frozen -> "gyro bias locked: %.3f deg/s".format(gyroBias.magnitudeDegPerSec())
                 gyroBias.ready  -> "gyro bias: %.3f deg/s".format(gyroBias.magnitudeDegPerSec())
                 else -> "gyro bias: measuring (%d/%d, stop the vehicle)"
                     .format(gyroBias.sampleCount(), GyroBias.MIN_SAMPLES)
             }
+            // A rejected jump means something upstream produced an impossible
+            // position. It must read 0. If it climbs, say so -- do not ride on.
+            tvSensorStatus.text =
+                if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias
         }
 
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
