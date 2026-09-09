@@ -51,19 +51,30 @@ object RunSummary {
      * @param pred     dead-reckoned positions in order, (lat, lon)
      * @param durationS wall-clock length of the ride
      * @param imuSamples how many IMU rows were written (for the Hz readout)
+     * @param blackoutFromIndex index into `truth` at which GNSS was cut. Distance
+     *        is counted from HERE, not from the start of the ride.
+     *
+     * Why that index matters: ISRO's metric is drift over the GNSS-DENIED
+     * distance. Counting the whole ride puts the GPS-healthy leg into the
+     * denominator, which silently divides the drift down -- on the 9 Sept run
+     * that leg was twice as long as the blackout, so the figure shown would have
+     * been about a third of the truth. A number that flatters us by accident is
+     * the one that gets found in Q&A.
      */
     fun compute(
         truth: List<Pair<Double, Double>>,
         pred: List<Pair<Double, Double>>,
         durationS: Double,
-        imuSamples: Int
+        imuSamples: Int,
+        blackoutFromIndex: Int = 0
     ): Result {
         if (truth.size < 2 || pred.isEmpty()) {
             return Result(0.0, durationS, 0.0, 0.0, false, 0.0, 0.0, truth.size, 0.0)
         }
-        // cumulative TRUE path length — the denominator that matters
+        // cumulative TRUE path length SINCE GNSS WAS CUT -- the denominator that matters
         var dist = 0.0
-        for (i in 1 until truth.size) {
+        val from = blackoutFromIndex.coerceIn(0, truth.size - 1).coerceAtLeast(1)
+        for (i in from until truth.size) {
             val step = metres(truth[i - 1].first, truth[i - 1].second,
                               truth[i].first, truth[i].second)
             // ignore fixes implying an impossible speed (matches dhruva/gpsclean.py)

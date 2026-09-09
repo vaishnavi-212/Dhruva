@@ -14,6 +14,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationCallback
@@ -48,6 +49,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var btnMapStandard: Button
     private lateinit var btnMapTerrain: Button
     private lateinit var tvErrorLabel: TextView
+    private lateinit var tvSensorStatus: TextView
+    private lateinit var btnSaveMap: Button
 
     private lateinit var summaryCard: LinearLayout
     private lateinit var summaryVerdict: TextView
@@ -74,6 +77,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var roadBindingOn = false
     private var lastGoodSpeedMps = 0.0
     private lateinit var switchRoadBinding: Switch
+
+    private val gyroBias = GyroBias()
+    private var voice: VoiceGuide? = null
+    private var stationaryNow = false
+    private var lastTruthPoint: GeoPoint? = null
+    private var blackoutFromIndex = 0
 
     private var lat0: Double? = null
     private var lon0: Double? = null
@@ -105,6 +114,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         btnMapStandard = findViewById(R.id.btnMapStandard)
         btnMapTerrain = findViewById(R.id.btnMapTerrain)
         tvErrorLabel = findViewById(R.id.tvErrorLabel)
+        tvSensorStatus = findViewById(R.id.tvSensorStatus)
+        btnSaveMap = findViewById(R.id.btnSaveMap)
 
         summaryCard = findViewById(R.id.summaryCard)
         summaryVerdict = findViewById(R.id.summaryVerdict)
@@ -127,6 +138,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         // Guide 3 add-on: solid blue truth line + dashed amber predicted line
         paths = LivePathOverlay(mapView)
+        voice = VoiceGuide(this)
         sessionStartMs = System.currentTimeMillis()
 
         sm = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -136,6 +148,14 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         // route.json ships in assets/. It is route-specific: a file for the wrong
         // area is worse than no file, which is why start() below is checked.
         road = try { RoadBinder.fromAssets(this) } catch (e: Exception) { null }
+
+        btnSaveMap.setOnClickListener {
+            // Do this at a desk on wifi, the day BEFORE the demo. Pan and zoom to
+            // the demo area first -- it downloads exactly what is on screen.
+            OfflineMap.downloadCurrentView(this, mapView) { msg ->
+                runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+            }
+        }
 
         btnMapStandard.setOnClickListener {
             mapView.setTileSource(TileSourceFactory.MAPNIK)
@@ -157,6 +177,14 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             if (!isChecked) tvErrorLabel.text = "GNSS locked — tracking"
 
             if (isChecked) {
+                // No GNSS from here on, so nothing can tell us we are stopped.
+                // Whatever bias we learned before the outage is what we carry.
+                gyroBias.freeze()
+                voice?.reset()
+                voice?.say("Satellite signal lost. Switching to inertial navigation.")
+                // Drift must be measured over the DENIED distance, not the whole ride.
+                blackoutFromIndex = gpsPoints.size
+
                 // Anchor the estimate to where we actually are, facing the way we
                 // are actually facing. Skipping this is what sent the dot east.
                 lastAcceptedGps?.let { loc ->
@@ -194,7 +222,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 truth = gpsPoints,
                 pred = predPoints,
                 durationS = durationS,
-                imuSamples = gyroSampleCount
+                imuSamples = gyroSampleCount,
+                blackoutFromIndex = blackoutFromIndex
             )
             summaryVerdict.text = RunSummary.verdict(r)
             summaryDistance.text = "Distance: %.0f m".format(r.distanceM)
@@ -214,6 +243,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         mapView.onResume()
         gyro?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         gravitySensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        voice?.shutdown()
     }
 
     override fun onPause() {
@@ -253,6 +287,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     // Guide 3 add-on: keep feeding the truth line even during a
                     // simulated blackout — the comparison is the whole point
                     paths.addTruth(loc.latitude, loc.longitude)
+                    lastTruthPoint = GeoPoint(loc.latitude, loc.longitude)
                     gpsPoints.add(loc.latitude to loc.longitude)
                 }
 
@@ -267,6 +302,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 // Freeze the speed the moment the blackout starts -- during one we
                 // are pretending these fixes do not exist.
                 if (!blackoutOn && loc.speed > 0.5f) lastGoodSpeedMps = loc.speed.toDouble()
+
+                // Gyro bias can only be measured while genuinely still, and only
+                // GNSS can tell us that -- accelerometer variance cannot: measured
+                // on the 7 Sept ride, a stopped engine idles at std 1.751 and a
+                // moving one at 1.757.
+                stationaryNow = !blackoutOn && loc.speed < 0.5f
 
                 if (deadReckoner == null) {
                     deadReckoner = DeadReckoner(
@@ -322,15 +363,29 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         // A stalled sensor stream must never be integrated as real elapsed time.
         if (dt <= 0.0 || dt > MAX_STEP_S) return
 
+        gyroBias.observe(event.values[0], event.values[1], event.values[2], stationaryNow)
+        if (gyroSampleCount % 100 == 0) {
+            tvSensorStatus.text = when {
+                gyroBias.frozen -> "gyro bias locked: %.3f deg/s".format(gyroBias.magnitudeDegPerSec())
+                gyroBias.ready  -> "gyro bias: %.3f deg/s".format(gyroBias.magnitudeDegPerSec())
+                else -> "gyro bias: measuring (%d/%d, stop the vehicle)"
+                    .format(gyroBias.sampleCount(), GyroBias.MIN_SAMPLES)
+            }
+        }
+
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
 
         // Rotation about the TRUE vertical, not the phone's z axis. Reduces to
         // gyro z when the phone happens to be flat, and stays correct when it is
         // not -- feeding raw z to a yaw-dependent estimator cost us 12.2% vs 8.3%
         // drift once already (RESOURCES 8g).
-        val yawRate = (event.values[0] * gravityUnit[0] +
-                event.values[1] * gravityUnit[1] +
-                event.values[2] * gravityUnit[2]).toDouble()
+        val gx = gyroBias.correctX(event.values[0])
+        val gy = gyroBias.correctY(event.values[1])
+        val gz = gyroBias.correctZ(event.values[2])
+
+        val yawRate = (gx * gravityUnit[0] +
+                gy * gravityUnit[1] +
+                gz * gravityUnit[2]).toDouble()
 
         val (x, y, radius) = dr.step(yawRate, dt)
         var lat: Double; var lon: Double
@@ -352,6 +407,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         paths.addPredicted(lat, lon)
         predPoints.add(lat to lon)
         tvErrorLabel.text = "%.0f m apart".format(paths.currentErrorMetres())
+
+        // Contribution 9: the wording loosens as the circle grows.
+        voice?.announceConfidence(radius, radius / 2.146 / 0.19)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -376,7 +434,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             confCircle = circle
         }
 
-        mapView.controller.animateTo(point)
+        // During a blackout, centring on the predicted dot pushes the truth line
+        // off the screen -- and the comparison between them IS the demo. In the
+        // 9 Sept recording the blue line left the right edge entirely. Centre on
+        // the midpoint of the two heads instead.
+        val t = lastTruthPoint
+        if (blackoutOn && t != null) {
+            mapView.controller.animateTo(
+                GeoPoint((t.latitude + lat) / 2.0, (t.longitude + lon) / 2.0)
+            )
+        } else {
+            mapView.controller.animateTo(point)
+        }
         mapView.invalidate()
     }
 }

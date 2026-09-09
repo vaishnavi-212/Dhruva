@@ -109,6 +109,34 @@
     </LinearLayout>
 
     <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/dhruva_surface"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvSensorStatus"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="gyro bias: measuring…"
+            android:textColor="@color/dhruva_text_dim"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnSaveMap"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Save map offline"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/summaryCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
