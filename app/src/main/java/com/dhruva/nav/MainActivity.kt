@@ -67,17 +67,38 @@ class MainActivity : AppCompatActivity() {
         tvElapsed = findViewById(R.id.tvElapsed)
         tvDistance = findViewById(R.id.tvDistance)
 
+        btnShare.isEnabled = latestRunDir() != null
+
         btnStartStop.setOnClickListener {
             if (!isRecording) attemptStart() else stopRecording()
         }
 
         btnShare.setOnClickListener {
-            finishedRunDir?.let { shareRun(this, it) }
+            // finishedRunDir is in-memory only, so it is null on every fresh
+            // launch -- and `?.let {}` then did NOTHING, silently. That is the
+            // "Share Last Run does nothing" bug: the button worked, there was
+            // just no run in memory to share.
+            val dir = finishedRunDir ?: latestRunDir()
+            if (dir == null) {
+                Toast.makeText(this, "No recorded runs found", Toast.LENGTH_SHORT).show()
+            } else {
+                try {
+                    shareRun(this, dir)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Share failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
         btnNavigate.setOnClickListener {
             startActivity(Intent(this, NavigateActivity::class.java))
         }
     }
+
+    /** Newest DhruvaRun_* folder on disk. Survives app restarts. */
+    private fun latestRunDir(): File? =
+        getExternalFilesDir(null)
+            ?.listFiles { f -> f.isDirectory && f.name.startsWith("DhruvaRun_") }
+            ?.maxByOrNull { it.name }
 
     private fun attemptStart() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -105,7 +126,7 @@ class MainActivity : AppCompatActivity() {
         totalDistanceM = 0.0
         finishedRunDir = null
         btnStartStop.text = "Stop Recording"
-        btnShare.isEnabled = false
+        btnShare.isEnabled = latestRunDir() != null
         handler.post(statusUpdater)
     }
 
@@ -115,7 +136,7 @@ class MainActivity : AppCompatActivity() {
         isRecording = false
         btnStartStop.text = "Start Recording"
         handler.removeCallbacks(statusUpdater)
-        btnShare.isEnabled = finishedRunDir != null
+        btnShare.isEnabled = (finishedRunDir ?: latestRunDir()) != null
     }
 
     private fun updateLiveStatus() {
