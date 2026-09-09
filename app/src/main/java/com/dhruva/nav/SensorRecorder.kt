@@ -61,7 +61,15 @@ class SensorRecorder(private val ctx: Context) : SensorEventListener {
 
         t0Nanos = 0L   // set by the first sensor event, shared by ALL files
 
-        // SENSOR_DELAY_FASTEST asks for the highest rate the hardware offers
+        // FIXED 100 Hz, not SENSOR_DELAY_FASTEST.
+        //
+        // FASTEST gave 200 Hz accel and 400 Hz gyro on the 7 Sept ride. Our
+        // pipeline resamples to 10 Hz by interpolation, so a 40x decimation
+        // ALIASES vibration straight into the model's features: measured 19.5%
+        // drift against 16.0% with the same data properly averaged. 100 Hz
+        // decimates 10:1 exactly and matches what every trained-on ride used.
+        //
+        // Higher is not better here. It has to match the training data.
         mapOf(
             Sensor.TYPE_LINEAR_ACCELERATION to "Accelerometer",   // gravity already removed
             Sensor.TYPE_GYROSCOPE to "Gyroscope",
@@ -69,12 +77,17 @@ class SensorRecorder(private val ctx: Context) : SensorEventListener {
             Sensor.TYPE_MAGNETIC_FIELD to "Magnetometer"
         ).forEach { (type, _) ->
             sm.getDefaultSensor(type)?.let {
-                sm.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST)
+                sm.registerListener(this, it, SAMPLING_PERIOD_US)
             }
         }
 
         return dir
     }
+    companion object {
+        /** 10 000 us = 100 Hz. Must stay matched to the training data. */
+        const val SAMPLING_PERIOD_US = 10_000
+    }
+
     fun startGps() {
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED) {

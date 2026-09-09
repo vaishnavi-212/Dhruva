@@ -151,6 +151,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             tvMode.text = if (isChecked) "Mode: DEAD RECKONING (simulated)" else "Mode: GNSS"
             paths.setBlackout(isChecked)
 
+            // "0 m apart" while GNSS is healthy is not a result -- there is no
+            // prediction to compare against yet, and it reads like a perfect
+            // score to anyone watching. Say what is actually happening.
+            if (!isChecked) tvErrorLabel.text = "GNSS locked — tracking"
+
             if (isChecked) {
                 // Anchor the estimate to where we actually are, facing the way we
                 // are actually facing. Skipping this is what sent the dot east.
@@ -269,16 +274,23 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                         speed = loc.speed.toDouble(), x = x, y = y
                     )
                 } else if (isRealMovement && !blackoutOn) {
-                    // Only while GNSS is genuinely in use. Correcting the estimate
-                    // from GPS during a "simulated blackout" makes the whole demo
-                    // meaningless -- it was doing exactly that.
-                    deadReckoner = DeadReckoner(heading = 0.0, speed = loc.speed.toDouble(), x = x, y = y)
-                } else if (isRealMovement) {
+                    // ONLY while GNSS is genuinely in use.
+                    //
+                    // The branches were the wrong way round: this arm rebuilt the
+                    // reckoner with heading = 0.0 on every healthy fix, and the arm
+                    // below -- which is reached only when blackoutOn is true --
+                    // called onGnssFix(), so the "blackout" estimate was still being
+                    // corrected from live GPS on every fix. The dot would have sat
+                    // exactly on the truth line, read 0 m apart, and the confidence
+                    // circle would never have grown. It would have looked perfect
+                    // and measured nothing.
                     deadReckoner!!.onGnssFix(x, y, loc.speed.toDouble())
                     if (loc.hasBearing() && loc.speed > 1.0f) {
                         deadReckoner!!.setHeadingFromBearing(loc.bearing)
                     }
                 }
+                // During a blackout: nothing. No position, no speed, no heading.
+                // That is what makes it a blackout.
 
                 // only let a real fix move the dot when we are NOT simulating a blackout
                 if (!blackoutOn && isRealMovement) {
