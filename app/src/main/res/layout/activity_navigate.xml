@@ -136,6 +136,17 @@
 
     </LinearLayout>
 
+    <Button
+        android:id="@+id/btnFinishRun"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="12dp"
+        android:text="Finish Run"
+        android:textColor="@color/dhruva_bg"
+        android:background="@drawable/bg_button_primary" />
+
     <LinearLayout
         android:id="@+id/summaryCard"
         android:layout_width="match_parent"
@@ -211,10 +222,10 @@
             android:layout_marginBottom="14dp" />
 
         <Button
-            android:id="@+id/btnFinishRun"
+            android:id="@+id/btnCloseSummary"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="Finish Run"
+            android:text="Close"
             android:textColor="@color/dhruva_bg"
             android:background="@drawable/bg_button_primary" />
 

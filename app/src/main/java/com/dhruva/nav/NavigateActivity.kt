@@ -61,6 +61,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var summaryConf: TextView
     private lateinit var summaryHz: TextView
     private lateinit var btnFinishRun: Button
+    private lateinit var btnCloseSummary: Button
 
     private lateinit var sm: SensorManager
     private var gyro: Sensor? = null
@@ -126,6 +127,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         summaryConf = findViewById(R.id.summaryConf)
         summaryHz = findViewById(R.id.summaryHz)
         btnFinishRun = findViewById(R.id.btnFinishRun)
+        btnCloseSummary = findViewById(R.id.btnCloseSummary)
 
         mapView.setTileSource(TileSourceFactory.MAPNIK)
         mapView.setMultiTouchControls(true)
@@ -241,6 +243,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             summaryConf.text = "Confidence: ±%.0f m (90%%)".format(r.confidence90M)
             summaryHz.text = "IMU rate: %.0f Hz".format(r.imuHz)
             summaryCard.visibility = View.VISIBLE
+            btnFinishRun.visibility = View.GONE
+        }
+
+        btnCloseSummary.setOnClickListener {
+            summaryCard.visibility = View.GONE
+            btnFinishRun.visibility = View.VISIBLE
         }
 
         startGpsUpdates()
