@@ -196,8 +196,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                         if (!ok) {
                             roadBindingOn = false
                             switchRoadBinding.isChecked = false
-                            tvErrorLabel.text = "route.json is for another area (%.0f m away)"
-                                .format(road?.snapDistanceM ?: 0.0)
+                            tvErrorLabel.text =
+                                "No route for this area (nearest %.0f m away) — riding free"
+                                    .format(road?.snapDistanceM ?: 0.0)
                         }
                     }
                 }
@@ -211,8 +212,15 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 return@setOnCheckedChangeListener
             }
             roadBindingOn = isChecked
-            if (isChecked && blackoutOn) {
-                lastAcceptedGps?.let { road?.start(it.latitude, it.longitude) }
+            if (isChecked) {
+                lastAcceptedGps?.let { loc ->
+                    val ok = road?.start(loc.latitude, loc.longitude) ?: false
+                    tvErrorLabel.text = if (ok)
+                        "bound to %s (%.0f m off)".format(road?.routeName, road?.snapDistanceM ?: 0.0)
+                    else
+                        "No route for this area (nearest %.0f m away)"
+                            .format(road?.snapDistanceM ?: 0.0)
+                }
             }
         }
 
