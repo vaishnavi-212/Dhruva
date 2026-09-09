@@ -1,6 +1,7 @@
 package com.dhruva.nav
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.*
 
@@ -8,35 +9,82 @@ import kotlin.math.*
  * Keeps the predicted dot ON THE ROAD.
  *
  * Without this the app tracks a free 2-D position: it counts distance and turns,
- * and every small heading error compounds. Measured on a real 1.7 km ride, the
- * dot ends up 514 m away -- in the middle of a field.
+ * and every small heading error compounds. Measured on a real 1.7 km ride with
+ * GNSS off, the dot ends up 514 m away, in the middle of a field.
  *
  * With this it is a train on rails. We tell it which road it is on, so it cannot
- * drift sideways at all. The only thing left to get wrong is how far along it has
- * gone. Same ride, same dumb constant speed: 166 m, and always on the road.
+ * drift sideways -- sideways stops existing. The only thing left to get wrong is
+ * how far ALONG it has gone. Same ride, same constant speed: 166 m.
  *
- * This is plain geometry -- no model, no training. Verified against the Python
- * pipeline: both give 166 m / 9.8% on the 5 Sept ride.
+ * Plain geometry, no model. Verified against the Python pipeline: both give
+ * 166 m / 9.8% on the 5 Sept ride.
+ *
+ * WHAT A ROUTE IS -- and is not. A route is ONE PATH: the sequence of road
+ * points for a journey we have driven before. It is NOT a map of every road.
+ * That is why the asset carries SEVERAL routes and start() picks whichever one
+ * we are actually on; ride somewhere none of them covers and it refuses rather
+ * than snapping to a road on the other side of town. Choosing between roads at a
+ * junction with no GNSS is map matching -- requirement 3, the HMM, and it is not
+ * what this class does.
  */
 class RoadBinder(routeJson: String) {
 
-    private val xs: DoubleArray          // metres east of the route's first point
-    private val ys: DoubleArray          // metres north
-    private val cum: DoubleArray         // distance along the route at each point
-    private val lat0: Double
-    private val lon0: Double
-    private val mPerDegLon: Double
+    private var xs = DoubleArray(0)      // metres east of the route's first point
+    private var ys = DoubleArray(0)      // metres north
+    private var cum = DoubleArray(0)     // distance along the route at each point
+    private var lat0 = 0.0
+    private var lon0 = 0.0
+    private var mPerDegLon = 1.0
+
+    private val alternates: List<JSONObject>
+
+    /** Which route is currently loaded, for the status line. */
+    var routeName: String = "route"
+        private set
 
     /** How far along the road we currently are, in metres. */
     var arcM: Double = 0.0
         private set
 
-    val lengthM: Double get() = cum[cum.size - 1]
+    /** How far the start point was from the chosen route. */
+    var snapDistanceM: Double = Double.NaN
+        private set
+
+    /**
+     * False when no route in the asset matches where we are.
+     *
+     * On 7 Sept a ride was recorded 3.2 km from the route the app carried.
+     * start() obediently snapped to the nearest point on it and slid the dot
+     * along a road on the other side of town; the screen read "2000 m apart" the
+     * whole way. A wrong road is far worse than no road.
+     *
+     * When this is false, do NOT call advance(). Fall back to the free position.
+     */
+    var bound: Boolean = false
+        private set
+
+    /** Freeze the dot -- e.g. while stopped at the start line. */
+    var paused: Boolean = false
+
+    val lengthM: Double get() = if (cum.isEmpty()) 0.0 else cum[cum.size - 1]
 
     init {
-        val pts = JSONObject(routeJson).getJSONArray("points")
+        val root = JSONObject(routeJson)
+        // Two shapes accepted:  {"points":[...]}  or  {"routes":[{name,points},...]}
+        alternates = if (root.has("routes")) {
+            val arr = root.getJSONArray("routes")
+            (0 until arr.length()).map { arr.getJSONObject(it) }
+        } else {
+            listOf(root)
+        }
+        load(alternates.first())
+    }
+
+    private fun load(route: JSONObject) {
+        val pts: JSONArray = route.getJSONArray("points")
         val n = pts.length()
         require(n >= 2) { "route needs at least 2 points" }
+        routeName = route.optString("name", "route")
 
         lat0 = pts.getJSONArray(0).getDouble(0)
         lon0 = pts.getJSONArray(0).getDouble(1)
@@ -51,11 +99,8 @@ class RoadBinder(routeJson: String) {
         }
     }
 
-    /**
-     * Call ONCE, with the last good GPS fix before the signal died.
-     * Finds where on the road that is. Everything after is just walking along it.
-     */
-    fun start(lat: Double, lon: Double): Boolean {
+    /** Nearest arc-length on the currently loaded route, and how far off it we are. */
+    private fun project(lat: Double, lon: Double): Pair<Double, Double> {
         val px = (lon - lon0) * mPerDegLon
         val py = (lat - lat0) * M_PER_DEG
         var bestD = Double.MAX_VALUE
@@ -65,54 +110,51 @@ class RoadBinder(routeJson: String) {
             val bx = xs[i + 1] - ax; val by = ys[i + 1] - ay
             val len2 = bx * bx + by * by
             val u = if (len2 == 0.0) 0.0
-            else ((px - ax) * bx + (py - ay) * by).div(len2).coerceIn(0.0, 1.0)
-            val qx = ax + u * bx; val qy = ay + u * by
-            val d = hypot(px - qx, py - qy)
+                    else ((px - ax) * bx + (py - ay) * by).div(len2).coerceIn(0.0, 1.0)
+            val d = hypot(px - (ax + u * bx), py - (ay + u * by))
             if (d < bestD) { bestD = d; bestS = cum[i] + u * sqrt(len2) }
         }
-        arcM = bestS
+        return Pair(bestD, bestS)
+    }
+
+    /**
+     * Call ONCE, with the last good GPS fix before the signal dies.
+     *
+     * Tries every route in the asset and keeps the nearest. Returns false, and
+     * leaves `bound` false, if none of them is within MAX_SNAP_M.
+     */
+    fun start(lat: Double, lon: Double): Boolean {
+        var bestRoute = 0
+        var bestD = Double.MAX_VALUE
+        var bestS = 0.0
+        for ((idx, r) in alternates.withIndex()) {
+            load(r)
+            val (d, s) = project(lat, lon)
+            if (d < bestD) { bestD = d; bestS = s; bestRoute = idx }
+        }
+        load(alternates[bestRoute])
         snapDistanceM = bestD
+        arcM = bestS
         bound = bestD <= MAX_SNAP_M
         return bound
     }
 
-    /** How far the start point was from the route. */
-    var snapDistanceM: Double = Double.NaN
-        private set
-
-    /**
-     * False when the route file does not match where we actually are.
-     *
-     * This matters more than it sounds. On 7 Sept a ride was recorded 3.2 km away
-     * from the route the app was carrying. `start()` obediently snapped to the
-     * nearest point on that route and slid the dot along a road on the other side
-     * of town, and the screen read "2000 m apart" all the way round.
-     *
-     * When this is false: do NOT use `advance()`. Fall back to your normal free
-     * position, and show something like "route not loaded for this area".
-     * A wrong road is far worse than no road.
-     */
-    var bound: Boolean = false
-        private set
-
     /**
      * Call on every step. Advances along the road and returns (lat, lon).
      *
-     * IMPORTANT -- what to pass as speedMps:
-     *   while GNSS is alive : the LIVE GPS speed, every fix. Stops then register
-     *                         on their own and the dot holds still.
-     *   after GNSS dies     : the last speed you saw before it died, held.
+     * WHAT TO PASS as speedMps:
+     *   while GNSS is alive : the LIVE GPS speed, every fix -- stops then
+     *                         register on their own and the dot holds still.
+     *   after GNSS dies     : the last speed seen before it died, held.
      *
-     * Anything below MIN_SPEED_MPS is treated as stopped and does not advance
-     * the dot. Without this, a phone sitting on a desk creeps forward forever on
-     * GPS speed noise -- which is exactly the "it moves when we are not moving"
-     * bug.
+     * Anything below MIN_SPEED_MPS counts as stopped. Without that, a phone on a
+     * desk creeps forward forever on GPS speed noise.
      *
      * Known limit: during a blackout, with the speed frozen, a genuine stop
-     * cannot be detected. On our 7 Sept ride that injected 11 m over 31 s of
-     * stops on a 1467 m ride -- under 1%. Acceptable; do not try to fix it with
-     * accelerometer variance, we measured that and an idling engine looks
-     * identical to a moving one (std 1.75 both).
+     * cannot be detected. On the 7 Sept ride that injected 11 m over 31 s of
+     * stops on a 1467 m ride -- under 1%. Do NOT try to fix it with accelerometer
+     * variance: measured, a stopped engine idles at std 1.751 and a moving one
+     * at 1.757.
      */
     fun advance(speedMps: Double, dtS: Double): Pair<Double, Double> {
         if (speedMps >= MIN_SPEED_MPS && !paused) {
@@ -120,9 +162,6 @@ class RoadBinder(routeJson: String) {
         }
         return at(arcM)
     }
-
-    /** Freeze the dot -- e.g. while the user is stopped at the start line. */
-    var paused: Boolean = false
 
     /** Position at a given distance along the road, as (lat, lon). */
     fun at(s: Double): Pair<Double, Double> {
@@ -146,12 +185,14 @@ class RoadBinder(routeJson: String) {
          *  standstill measured 0.10-0.25 m/s on our own runs. */
         const val MIN_SPEED_MPS = 0.5
 
-        /** If the start point is further than this from the route, the route is
-         *  the wrong one. Our good rides sit within 50 m of their own route. */
+        /** No route within this distance means we are somewhere we have never
+         *  ridden. Our good rides sit within 50 m of their own route. */
         const val MAX_SNAP_M = 150.0
 
-        /** Load route.json from app/src/main/assets/ */
-        fun fromAssets(ctx: Context, name: String = "route.json") =
-            RoadBinder(ctx.assets.open(name).bufferedReader().use { it.readText() })
+        /** Prefers routes.json (several routes); falls back to route.json. */
+        fun fromAssets(ctx: Context): RoadBinder {
+            val name = ctx.assets.list("")?.firstOrNull { it == "routes.json" } ?: "route.json"
+            return RoadBinder(ctx.assets.open(name).bufferedReader().use { it.readText() })
+        }
     }
 }
