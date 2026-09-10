@@ -6,72 +6,72 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Polyline
 
 /**
- * Draws the two paths that ARE the demo: where GPS says we went (solid) and
- * where dead reckoning thinks we went (dotted).
+ * Draws the two paths that ARE the demo: where GPS says we went (solid blue) and
+ * where dead reckoning thinks we went (dashed amber).
  *
- * While GNSS is healthy the two sit on top of each other. The instant the
- * blackout toggle is flipped, the dotted line starts its own life and the gap
- * between them grows. That divergence, watched live, explains the whole project
- * faster than any slide.
+ * EVERY BLACKOUT GETS ITS OWN LINE. On 10 Sept three blackouts in one session were
+ * drawn as one polyline, so the end of each was joined to the start of the next
+ * by a long straight dashed segment that looked like the estimate had jumped.
+ * Earlier blackouts stay on the map, dimmed, so the live one is unambiguous.
  *
- * Usage in NavigateActivity:
- *
- *     private val paths = LivePathOverlay(map)
- *     // every GPS fix, whether or not we are in blackout:
- *     paths.addTruth(lat, lon)
- *     // every DeadReckoner step:
- *     paths.addPredicted(lat, lon)
- *     // when the toggle changes:
- *     paths.setBlackout(on)
+ *     paths.addTruth(lat, lon)          // every GPS fix, blackout or not
+ *     paths.startPredicted(lat, lon)    // at the start of EACH blackout
+ *     paths.addPredicted(lat, lon)      // every dead-reckoning step
+ *     paths.setBlackout(on)             // when the toggle changes
  */
 class LivePathOverlay(private val map: MapView) {
 
     private val truth = Polyline(map).apply {
-        outlinePaint.color = Color.parseColor("#2471A3")   // solid blue
+        outlinePaint.color = Color.parseColor("#2471A3")
         outlinePaint.strokeWidth = 9f
     }
-    private val predicted = Polyline(map).apply {
-        outlinePaint.color = Color.parseColor("#E67E22")   // amber
-        outlinePaint.strokeWidth = 7f
-        // dashes: 18 px on, 14 px off. Colour alone is not enough on a projector.
-        outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(18f, 14f), 0f)
-    }
-    /** straight line between the two current heads — makes the error legible */
+    /** straight line between the two current heads -- makes the error legible */
     private val gap = Polyline(map).apply {
         outlinePaint.color = Color.parseColor("#C0392B")
         outlinePaint.strokeWidth = 4f
     }
 
+    private val segments = mutableListOf<Polyline>()
+    private var current: Polyline? = null
+
     private var lastTruth: GeoPoint? = null
     private var lastPred: GeoPoint? = null
     private var blackout = false
-
-    /**
-     * The predicted line stays EMPTY until this is called.
-     *
-     * Contract A, rule 2: "xy[0] must equal init['xy']". If the reckoner emits a
-     * position before it has been initialised from a real GNSS fix, that first
-     * point sits at whatever the default was -- and the polyline draws a single
-     * straight line from there to the real track, right across the map. It looks
-     * like the estimate ran away. It did not; it was never started.
-     *
-     * Call this once, on the first GPS fix with usable accuracy, with the same
-     * position you initialise the DeadReckoner from.
-     */
-    fun startPredicted(lat: Double, lon: Double) {
-        armed = true
-        val p = GeoPoint(lat, lon)
-        lastPred = p
-        predicted.addPoint(p)
-        map.invalidate()
-    }
-
     private var armed = false
+
+    /** Impossible jumps rejected. Must read 0; shown on screen as BAD FRAMES. */
+    var dropped = 0
+        private set
 
     init {
         map.overlays.add(truth)
-        map.overlays.add(predicted)
         map.overlays.add(gap)
+    }
+
+    private fun newSegment() = Polyline(map).apply {
+        outlinePaint.color = Color.parseColor("#E67E22")
+        outlinePaint.strokeWidth = 7f
+        // dashes: colour alone is not enough on a projector
+        outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(18f, 14f), 0f)
+    }
+
+    /**
+     * Start a NEW predicted line at the last good fix. Nothing is drawn before
+     * this -- Contract A: xy[0] must equal init['xy'].
+     */
+    fun startPredicted(lat: Double, lon: Double) {
+        current?.outlinePaint?.color = Color.parseColor("#95A5A6")   // dim the finished one
+        val seg = newSegment()
+        val under = map.overlays.indexOf(gap).coerceAtLeast(0)
+        map.overlays.add(under, seg)
+        segments.add(seg)
+        current = seg
+
+        armed = true
+        val p = GeoPoint(lat, lon)
+        lastPred = p
+        seg.addPoint(p)
+        refreshGap()
     }
 
     fun addTruth(lat: Double, lon: Double) {
@@ -82,43 +82,29 @@ class LivePathOverlay(private val map: MapView) {
     }
 
     fun addPredicted(lat: Double, lon: Double) {
-        if (!armed) return                       // not initialised yet -- drop it
+        val seg = current
+        if (!armed || seg == null) return
         val p = GeoPoint(lat, lon)
-
-        // Safety net, not the fix: at 10 Hz nothing on a road moves 100 m between
-        // two samples. A jump that large is a bad frame, never a real position.
-        // If this ever fires, the real bug is upstream -- log it, do not live with it.
+        // Safety net, not a fix: nothing on a road moves 100 m between two samples.
         lastPred?.let {
             if (it.distanceToAsDouble(p) > MAX_STEP_M) { dropped++; return }
         }
-
         lastPred = p
-        predicted.addPoint(p)
+        seg.addPoint(p)
         refreshGap()
     }
 
-    /** How many impossible jumps were rejected. Should be 0. Show it while testing. */
-    var dropped = 0
-        private set
-
     fun setBlackout(on: Boolean) {
         blackout = on
-        // amber while dead reckoning, green while it is merely shadowing GNSS
-        predicted.outlinePaint.color =
-            Color.parseColor(if (on) "#E67E22" else "#1E8449")
-        map.invalidate()
+        // amber while dead reckoning; green once GNSS is back
+        current?.outlinePaint?.color = Color.parseColor(if (on) "#E67E22" else "#1E8449")
+        refreshGap()
     }
 
-    /** Current separation in metres — show it as a live number next to the map. */
     fun currentErrorMetres(): Double {
         val t = lastTruth ?: return 0.0
         val p = lastPred ?: return 0.0
         return t.distanceToAsDouble(p)
-    }
-
-    companion object {
-        /** Largest believable move between two predicted samples. */
-        const val MAX_STEP_M = 100.0
     }
 
     private fun refreshGap() {
@@ -128,8 +114,14 @@ class LivePathOverlay(private val map: MapView) {
     }
 
     fun clear() {
-        truth.setPoints(emptyList()); predicted.setPoints(emptyList()); gap.setPoints(emptyList())
+        segments.forEach { map.overlays.remove(it) }
+        segments.clear(); current = null
+        truth.setPoints(emptyList()); gap.setPoints(emptyList())
         lastTruth = null; lastPred = null; armed = false; dropped = 0
         map.invalidate()
+    }
+
+    companion object {
+        const val MAX_STEP_M = 100.0
     }
 }

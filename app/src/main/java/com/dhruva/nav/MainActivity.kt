@@ -38,7 +38,7 @@ class MainActivity : AppCompatActivity() {
     private var recordingStartMs = 0L
     private var finishedRunDir: File? = null
 
-    private val prevLineCounts = mutableMapOf<String, Int>()
+    private val prevLineCounts = mutableMapOf<String, Long>()
     private var prevLocation: android.location.Location? = null
     private var totalDistanceM = 0.0
 
@@ -74,6 +74,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnShare.setOnClickListener {
+            if (isRecording) {
+                // Zipping a folder that is still being written produces truncated
+                // files -- the 10 Sept zip. Stop first.
+                Toast.makeText(this, "Stop recording first — the files are still being written",
+                    Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             // finishedRunDir is in-memory only, so it is null on every fresh
             // launch -- and `?.let {}` then did NOTHING, silently. That is the
             // "Share Last Run does nothing" bug: the button worked, there was
@@ -92,6 +99,25 @@ class MainActivity : AppCompatActivity() {
         btnNavigate.setOnClickListener {
             startActivity(Intent(this, NavigateActivity::class.java))
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The activity can be rebuilt while the service keeps recording (rotation,
+        // memory pressure, returning from Navigate). Trust the service, not our field.
+        val rec = RecordingService.activeRecorder
+        if (!isRecording && rec != null && !rec.stopped) {
+            isRecording = true
+            recordingStartMs = RecordingService.startedAtMs
+            btnStartStop.text = "Stop Recording"
+            handler.removeCallbacks(statusUpdater)
+            handler.post(statusUpdater)
+        } else if (isRecording && rec != null && rec.stopped) {
+            isRecording = false
+            btnStartStop.text = "Start Recording"
+            handler.removeCallbacks(statusUpdater)
+        }
+        btnShare.isEnabled = !isRecording && (finishedRunDir ?: latestRunDir()) != null
     }
 
     /** Newest DhruvaRun_* folder on disk. Survives app restarts. */
@@ -126,12 +152,17 @@ class MainActivity : AppCompatActivity() {
         totalDistanceM = 0.0
         finishedRunDir = null
         btnStartStop.text = "Stop Recording"
-        btnShare.isEnabled = latestRunDir() != null
+        btnShare.isEnabled = false
         handler.post(statusUpdater)
     }
 
     private fun stopRecording() {
         finishedRunDir = RecordingService.activeRunDir
+        // Flush and close NOW. stopService() only schedules the service's
+        // onDestroy(); a Share pressed in that gap zipped half-written files --
+        // on 10 Sept, 41 s of IMU cut mid-line and an empty Location.csv.
+        // stop() is idempotent, so onDestroy() calling it again is harmless.
+        RecordingService.activeRecorder?.stop()
         stopService(Intent(this, RecordingService::class.java))
         isRecording = false
         btnStartStop.text = "Start Recording"
@@ -141,20 +172,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateLiveStatus() {
         val rec = RecordingService.activeRecorder ?: return
-        val dir = RecordingService.activeRunDir
 
-        // Hz — count new CSV lines written since the last poll, one second ago
+        // Hz from the recorder's own event counters. This used to re-read every CSV
+        // in full once a second -- megabytes per tick on the main thread by the end
+        // of a long ride, the same thread that receives the sensor events.
         val sensorFiles = listOf("Accelerometer", "Gyroscope", "Gravity", "Magnetometer")
         val hzText = StringBuilder()
-        if (dir != null) {
-            sensorFiles.forEach { name ->
-                val f = File(dir, "$name.csv")
-                val lines = if (f.exists()) f.readLines().size else 0
-                val prev = prevLineCounts[name] ?: 0
-                val hz = (lines - prev).coerceAtLeast(0)
-                prevLineCounts[name] = lines
-                hzText.append("$name: $hz Hz   ")
-            }
+        sensorFiles.forEach { name ->
+            val count = rec.eventCount(name)
+            val prev = prevLineCounts[name] ?: count
+            prevLineCounts[name] = count
+            hzText.append("$name: ${(count - prev).coerceAtLeast(0L)} Hz   ")
         }
         tvHz.text = hzText.toString().ifBlank { "Accel: -- Hz" }
 

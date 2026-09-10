@@ -66,7 +66,8 @@ object RunSummary {
         pred: List<Pair<Double, Double>>,
         durationS: Double,
         imuSamples: Int,
-        blackoutFromIndex: Int = 0
+        blackoutFromIndex: Int = 0,
+        blackoutDurationS: Double = durationS
     ): Result {
         if (truth.size < 2 || pred.isEmpty()) {
             return Result(0.0, durationS, 0.0, 0.0, false, 0.0, 0.0, truth.size, 0.0)
@@ -89,7 +90,10 @@ object RunSummary {
             finalErrorM = err,
             driftPct = drift,
             passes = dist > 1.0 && drift < ISRO_LIMIT_PCT,
-            meanSpeedMps = if (durationS > 0) dist / durationS else 0.0,
+            // Distance and time must describe the SAME stretch. Denied distance over
+            // whole-session time printed 7.9 km/h on 10 Sept for a blackout ridden at
+            // about 22 km/h.
+            meanSpeedMps = if (blackoutDurationS > 0) dist / blackoutDurationS else 0.0,
             // the honest 90% circle after travelling this far without a fix
             confidence90M = 2.146 * (SIGMA_PER_METRE * dist).coerceAtLeast(2.0),
             gpsFixes = truth.size,

@@ -84,6 +84,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var stationaryNow = false
     private var lastTruthPoint: GeoPoint? = null
     private var blackoutFromIndex = 0
+    private var blackoutToIndex = -1
+    private var blackoutStartMs = 0L
+    private var blackoutEndMs = 0L
+    private lateinit var btnRoute: Button
 
     private var lat0: Double? = null
     private var lon0: Double? = null
@@ -128,6 +132,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         summaryHz = findViewById(R.id.summaryHz)
         btnFinishRun = findViewById(R.id.btnFinishRun)
         btnCloseSummary = findViewById(R.id.btnCloseSummary)
+        btnRoute = findViewById(R.id.btnRoute)
 
         mapView.setTileSource(TileSourceFactory.MAPNIK)
         mapView.setMultiTouchControls(true)
@@ -147,9 +152,22 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         gyro = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         gravitySensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
 
-        // route.json ships in assets/. It is route-specific: a file for the wrong
-        // area is worse than no file, which is why start() below is checked.
+        // routes.json ships in assets/: several stored routes, no synthetic padding.
+        // A route for the wrong area is worse than none, which is why start() is checked.
         road = try { RoadBinder.fromAssets(this) } catch (e: Exception) { null }
+
+        // AUTO binds to the nearest stored route, which is a guess wherever routes
+        // share a road and split later. For a demo, tap to pick the route you will ride.
+        btnRoute.text = road?.selectionLabel() ?: "Route: none"
+        btnRoute.setOnClickListener {
+            val rb = road ?: return@setOnClickListener
+            if (blackoutOn) {
+                Toast.makeText(this, "Choose the route before cutting GPS", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            btnRoute.text = rb.cycleSelection()
+            if (roadBindingOn) lastAcceptedGps?.let { bindRoad(it) }
+        }
 
         btnSaveMap.setOnClickListener {
             // Do this at a desk on wifi, the day BEFORE the demo. Pan and zoom to
@@ -176,33 +194,36 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             // "0 m apart" while GNSS is healthy is not a result -- there is no
             // prediction to compare against yet, and it reads like a perfect
             // score to anyone watching. Say what is actually happening.
-            if (!isChecked) tvErrorLabel.text = "GNSS locked — tracking"
+            if (!isChecked) {
+                tvErrorLabel.text = "GNSS locked — tracking"
+                blackoutEndMs = System.currentTimeMillis()
+                blackoutToIndex = gpsPoints.size
+                gyroBias.unfreeze()          // GNSS is back: keep learning the bias
+            }
 
             if (isChecked) {
-                // No GNSS from here on, so nothing can tell us we are stopped.
-                // Whatever bias we learned before the outage is what we carry.
+                // The last fix may have said "stationary". If that flag stayed true
+                // through the outage, the bias estimator would average a MOVING gyro.
+                stationaryNow = false
                 gyroBias.freeze()
                 voice?.reset()
                 voice?.say("Satellite signal lost. Switching to inertial navigation.")
-                // Drift must be measured over the DENIED distance, not the whole ride.
-                blackoutFromIndex = gpsPoints.size
 
-                // Anchor the estimate to where we actually are, facing the way we
-                // are actually facing. Skipping this is what sent the dot east.
+                // Each blackout is scored on its own: denied distance from HERE,
+                // denied time from NOW, and a prediction list that starts empty.
+                // On 10 Sept a third blackout inherited the first two's points.
+                blackoutFromIndex = gpsPoints.size
+                blackoutToIndex = -1
+                blackoutStartMs = System.currentTimeMillis()
+                blackoutEndMs = 0L
+                predPoints.clear()
+
+                // Anchor to where we are, facing the way we are facing.
                 lastAcceptedGps?.let { loc ->
                     if (loc.hasBearing()) deadReckoner?.setHeadingFromBearing(loc.bearing)
-                    paths.startPredicted(loc.latitude, loc.longitude)
-
-                    if (roadBindingOn) {
-                        val ok = road?.start(loc.latitude, loc.longitude) ?: false
-                        if (!ok) {
-                            roadBindingOn = false
-                            switchRoadBinding.isChecked = false
-                            tvErrorLabel.text =
-                                "No route for this area (nearest %.0f m away) — riding free"
-                                    .format(road?.snapDistanceM ?: 0.0)
-                        }
-                    }
+                    paths.startPredicted(loc.latitude, loc.longitude)   // a NEW line
+                    predPoints.add(loc.latitude to loc.longitude)
+                    if (roadBindingOn) bindRoad(loc)
                 }
             }
         }
@@ -210,30 +231,43 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         switchRoadBinding.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked && road == null) {
                 switchRoadBinding.isChecked = false
-                tvErrorLabel.text = "no route.json in assets"
+                tvErrorLabel.text = "no routes.json in assets"
+                return@setOnCheckedChangeListener
+            }
+            if (blackoutOn) {
+                // Binding needs the last GOOD fix. Mid-blackout the only fixes are
+                // ones we are pretending do not exist -- binding to them is cheating.
+                if (isChecked != roadBindingOn) {
+                    switchRoadBinding.isChecked = roadBindingOn
+                    Toast.makeText(this, "Set road binding before cutting GPS",
+                        Toast.LENGTH_SHORT).show()
+                }
                 return@setOnCheckedChangeListener
             }
             roadBindingOn = isChecked
-            if (isChecked) {
-                lastAcceptedGps?.let { loc ->
-                    val ok = road?.start(loc.latitude, loc.longitude) ?: false
-                    tvErrorLabel.text = if (ok)
-                        "bound to %s (%.0f m off)".format(road?.routeName, road?.snapDistanceM ?: 0.0)
-                    else
-                        "No route for this area (nearest %.0f m away)"
-                            .format(road?.snapDistanceM ?: 0.0)
-                }
-            }
+            if (isChecked) lastAcceptedGps?.let { bindRoad(it) }
         }
 
         btnFinishRun.setOnClickListener {
-            val durationS = (System.currentTimeMillis() - sessionStartMs) / 1000.0
+            val now = System.currentTimeMillis()
+            val durationS = (now - sessionStartMs) / 1000.0
+            if (blackoutStartMs == 0L || predPoints.size < 2) {
+                Toast.makeText(this, "No GPS blackout in this session — nothing to score",
+                    Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            // Score ONLY the most recent blackout: truth up to where it ended, time
+            // from its start to its end (or to now, if it is still running).
+            val truthEnd = if (blackoutToIndex >= 0) blackoutToIndex else gpsPoints.size
+            val blackoutDurationS =
+                ((if (blackoutEndMs > 0L) blackoutEndMs else now) - blackoutStartMs) / 1000.0
             val r = RunSummary.compute(
-                truth = gpsPoints,
-                pred = predPoints,
+                truth = gpsPoints.subList(0, truthEnd).toList(),
+                pred = predPoints.toList(),
                 durationS = durationS,
                 imuSamples = gyroSampleCount,
-                blackoutFromIndex = blackoutFromIndex
+                blackoutFromIndex = blackoutFromIndex,
+                blackoutDurationS = blackoutDurationS
             )
             summaryVerdict.text = RunSummary.verdict(r)
             summaryDistance.text = "Distance without GPS: %.0f m".format(r.distanceM)
@@ -252,6 +286,22 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         }
 
         startGpsUpdates()
+    }
+
+    /** Bind to a route from a GOOD fix, and say exactly what happened. */
+    private fun bindRoad(loc: Location) {
+        val rb = road ?: return
+        // Bearing decides which way along the route we travel; below ~1 m/s it is noise.
+        val bearing = if (loc.hasBearing() && loc.speed > 1f) loc.bearing else null
+        if (rb.start(loc.latitude, loc.longitude, bearing)) {
+            tvErrorLabel.text = "bound to %s (%.0f m off, %s)".format(
+                rb.routeName, rb.snapDistanceM, if (rb.direction > 0) "forward" else "reverse")
+        } else {
+            roadBindingOn = false                 // set BEFORE the switch, so its listener is a no-op
+            switchRoadBinding.isChecked = false
+            tvErrorLabel.text = "No route for this area (nearest %.0f m away) — riding free"
+                .format(rb.snapDistanceM)
+        }
     }
 
     override fun onResume() {
@@ -381,12 +431,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         gyroBias.observe(event.values[0], event.values[1], event.values[2], stationaryNow)
         if (gyroSampleCount % 100 == 0) {
-            val bias = when {
-                gyroBias.frozen -> "gyro bias locked: %.3f deg/s".format(gyroBias.magnitudeDegPerSec())
-                gyroBias.ready  -> "gyro bias: %.3f deg/s".format(gyroBias.magnitudeDegPerSec())
-                else -> "gyro bias: measuring (%d/%d, stop the vehicle)"
-                    .format(gyroBias.sampleCount(), GyroBias.MIN_SAMPLES)
-            }
+            val bias = gyroBias.statusText()
             // A rejected jump means something upstream produced an impossible
             // position. It must read 0. If it climbs, say so -- do not ride on.
             tvSensorStatus.text =
@@ -426,7 +471,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         // Guide 3 add-on: predicted track + live divergence label
         paths.addPredicted(lat, lon)
         predPoints.add(lat to lon)
-        tvErrorLabel.text = "%.0f m apart".format(paths.currentErrorMetres())
+        val apart = "%.0f m apart".format(paths.currentErrorMetres())
+        tvErrorLabel.text =
+            if (roadBindingOn && rb != null && rb.atRouteEnd) "$apart · end of known route, holding"
+            else apart
 
         // Contribution 9: the wording loosens as the circle grows.
         voice?.announceConfidence(radius, radius / 2.146 / 0.19)

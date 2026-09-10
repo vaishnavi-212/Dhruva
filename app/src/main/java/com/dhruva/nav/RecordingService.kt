@@ -16,6 +16,8 @@ class RecordingService : Service() {
         // simplest thing that works for a two-person hackathon build
         var activeRecorder: SensorRecorder? = null
         var activeRunDir: File? = null
+        /** When recording began, so a rebuilt MainActivity shows the right elapsed time. */
+        var startedAtMs = 0L
     }
 
     override fun onCreate() {
@@ -39,6 +41,7 @@ class RecordingService : Service() {
 
         activeRecorder = recorder
         activeRunDir = dir
+        startedAtMs = System.currentTimeMillis()
     }
 
     override fun onDestroy() {
