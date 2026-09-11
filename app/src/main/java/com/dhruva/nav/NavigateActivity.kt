@@ -77,6 +77,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var road: RoadBinder? = null
     private var roadBindingOn = false
     private var lastGoodSpeedMps = 0.0
+    // Recent MOVING GPS speeds (time ms, m/s). The speed carried into a blackout is their median.
+    private val recentSpeeds = ArrayDeque<Pair<Long, Double>>()
+    private val MOVING_MPS = 1.5
+    private val SPEED_WINDOW_MS = 30_000L
+    private var lastFixMs = 0L
+    private val TRUTH_STALE_S = 10.0
     private lateinit var switchRoadBinding: Switch
 
     private val gyroBias = GyroBias()
@@ -213,8 +219,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         }
 
         switchBlackout.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked && lastGoodSpeedMps < MOVING_MPS) {
+                // No measured moving speed yet. A blackout now would carry a speed of zero
+                // and the dot would sit still for the whole outage (11 Sept, run 3).
+                switchBlackout.isChecked = false
+                Toast.makeText(this, "Ride with GPS on until you are moving — no speed measured yet",
+                    Toast.LENGTH_LONG).show()
+                return@setOnCheckedChangeListener
+            }
             blackoutOn = isChecked
-            tvMode.text = if (isChecked) "Mode: DEAD RECKONING (simulated)" else "Mode: GNSS"
+            tvMode.text = if (isChecked)
+                "Mode: DEAD RECKONING (simulated)\nholding %.0f km/h".format(lastGoodSpeedMps * 3.6)
+            else "Mode: GNSS"
             paths.setBlackout(isChecked)
 
             // "0 m apart" while GNSS is healthy is not a result -- there is no
@@ -280,6 +296,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             if (blackoutStartMs == 0L || predPoints.size < 2) {
                 Toast.makeText(this, "No GPS blackout in this session — nothing to score",
                     Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            val truthAgeS = if (lastFixMs == 0L) 9999.0 else (now - lastFixMs) / 1000.0
+            if (truthAgeS > TRUTH_STALE_S) {
+                // 11 Sept run 3: phone location was switched off mid-run, and the card scored
+                // the dot against a GPS point three minutes old. Refuse instead.
+                summaryVerdict.text = "NOT SCORABLE — real GPS stopped %.0f s before Finish".format(truthAgeS)
+                summaryDistance.text = "Phone location was switched off, so there is nothing to compare against."
+                summaryError.text = "Use only 'Simulate GPS loss'. Never turn phone location off in a scored run."
+                summaryDrift.text = ""; summarySpeed.text = ""; summaryConf.text = ""; summaryHz.text = ""
+                summaryCard.visibility = View.VISIBLE
+                btnFinishRun.visibility = View.GONE
                 return@setOnClickListener
             }
             // Score ONLY the most recent blackout: truth up to where it ended, time
@@ -393,7 +421,24 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
                 // Freeze the speed the moment the blackout starts -- during one we
                 // are pretending these fixes do not exist.
-                if (!blackoutOn && loc.speed > 0.5f) lastGoodSpeedMps = loc.speed.toDouble()
+                lastFixMs = System.currentTimeMillis()
+                if (!blackoutOn) {
+                    // The held speed is the MEDIAN of the last 30 s of moving fixes, not the
+                    // last single fix. On 11 Sept the switch was flipped 12 m into the ride
+                    // while every fix still read 0.0-0.35 m/s: the held speed was zero and
+                    // the dot never moved.
+                    if (loc.hasSpeed() && loc.speed > MOVING_MPS) {
+                        recentSpeeds.addLast(lastFixMs to loc.speed.toDouble())
+                    }
+                    while (recentSpeeds.isNotEmpty() &&
+                           lastFixMs - recentSpeeds.first().first > SPEED_WINDOW_MS) {
+                        recentSpeeds.removeFirst()
+                    }
+                    if (recentSpeeds.isNotEmpty()) {
+                        val sorted = recentSpeeds.map { it.second }.sorted()
+                        lastGoodSpeedMps = sorted[sorted.size / 2]
+                    }
+                }
 
                 // Gyro bias can only be measured while genuinely still, and only
                 // GNSS can tell us that -- accelerometer variance cannot: measured
@@ -460,8 +505,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             val bias = gyroBias.statusText()
             // A rejected jump means something upstream produced an impossible
             // position. It must read 0. If it climbs, say so -- do not ride on.
+            // If the PHONE's location goes off, there is no truth left to score against.
+            val gpsAgeS = if (lastFixMs > 0) (System.currentTimeMillis() - lastFixMs) / 1000 else 0
+            val truthNote = if (gpsAgeS > 5) " · REAL GPS LOST ${gpsAgeS}s — score invalid" else ""
             tvSensorStatus.text =
-                if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias
+                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + truthNote
         }
 
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
