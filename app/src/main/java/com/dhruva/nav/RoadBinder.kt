@@ -95,6 +95,12 @@ class RoadBinder(routeJson: String) {
         load(routes.first())
     }
 
+    /** Select a route by index, or null for AUTO. Clears any existing binding. */
+    fun select(index: Int?) {
+        selectedIndex = index?.takeIf { it in routes.indices }
+        bound = false
+    }
+
     /** Cycle AUTO -> route 1 -> route 2 -> ... -> AUTO. Returns a label for the button. */
     fun cycleSelection(): String {
         val cur = selectedIndex

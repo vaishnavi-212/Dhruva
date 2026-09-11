@@ -88,6 +88,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var blackoutStartMs = 0L
     private var blackoutEndMs = 0L
     private lateinit var btnRoute: Button
+    private lateinit var btnSaveRoute: Button
 
     private var lat0: Double? = null
     private var lon0: Double? = null
@@ -133,6 +134,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         btnFinishRun = findViewById(R.id.btnFinishRun)
         btnCloseSummary = findViewById(R.id.btnCloseSummary)
         btnRoute = findViewById(R.id.btnRoute)
+        btnSaveRoute = findViewById(R.id.btnSaveRoute)
 
         mapView.setTileSource(TileSourceFactory.MAPNIK)
         mapView.setMultiTouchControls(true)
@@ -154,7 +156,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         // routes.json ships in assets/: several stored routes, no synthetic padding.
         // A route for the wrong area is worse than none, which is why start() is checked.
-        road = try { RoadBinder.fromAssets(this) } catch (e: Exception) { null }
+        // Routes learned on this phone first, then the ones shipped with the app.
+        road = try { RoadBinder(RouteStore.combinedJson(this)) } catch (e: Exception) { null }
 
         // AUTO binds to the nearest stored route, which is a guess wherever routes
         // share a road and split later. For a demo, tap to pick the route you will ride.
@@ -167,6 +170,29 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             }
             btnRoute.text = rb.cycleSelection()
             if (roadBindingOn) lastAcceptedGps?.let { bindRoad(it) }
+        }
+
+        btnSaveRoute.setOnClickListener {
+            if (blackoutOn) {
+                Toast.makeText(this, "Save the route after GPS is back on", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val saved = RouteStore.saveTrack(this, gpsPoints.toList())
+            if (saved == null) {
+                Toast.makeText(this, "Track too short to save — ride at least %.0f m with GPS on"
+                    .format(RouteStore.MIN_ROUTE_M), Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            road = try { RoadBinder(RouteStore.combinedJson(this)) } catch (e: Exception) { null }
+            road?.select(0)                          // the route just learned is listed first
+            btnRoute.text = road?.selectionLabel() ?: "Route: none"
+            if (roadBindingOn) {                     // the old binding belonged to the old route set
+                roadBindingOn = false
+                switchRoadBinding.isChecked = false
+            }
+            Toast.makeText(this, "Saved '%s' — %.0f m%s. Selected for road binding."
+                .format(saved.name, saved.lengthM, if (saved.closedLoop) ", closed loop" else ""),
+                Toast.LENGTH_LONG).show()
         }
 
         btnSaveMap.setOnClickListener {
