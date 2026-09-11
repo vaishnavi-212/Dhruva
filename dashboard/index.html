@@ -48,7 +48,9 @@
         <span style="color:#4cd3c2">— Truth</span>
         <span style="color:#f3a94e">- - Predicted</span>
         <span style="color:#4cd3c2">◯ Confidence radius</span>
-        <span style="color:#f3a94e">● Detected landmark</span>
+        <span style="color:#f3a94e">● Detected at a surveyed breaker</span>
+        <span style="color:#93a4b8">• Unverified detection</span>
+        <span style="color:#e7edf3">○ Surveyed breaker</span>
     </div>
 </div>
 
@@ -176,16 +178,44 @@
           py = Array.isArray(nearest.truth) ? nearest.truth[1] : nearest.pred[1];
         }
         const cx = scaleX(px), cy = scaleY(py);
-        const matched = lm.matched === true || lm.kind === 'detected';
+        if (lm.kind === 'surveyed') {
+          // ground truth: breakers surveyed on foot, drawn as hollow rings
+          svg.innerHTML += `<circle cx="${cx}" cy="${cy}" r="8" fill="none" stroke="#e7edf3" stroke-width="1.5" opacity="0.85"><title>surveyed breaker ${lm.map_id || ''}</title></circle>`;
+          return;
+        }
+        // matched = fired within 15 m of a surveyed breaker. Older run files carry no
+        // 'matched' field; there every detection is drawn as before.
+        const matched = lm.matched === true || (lm.matched === undefined && lm.kind === 'detected');
         const color = matched ? '#f3a94e' : '#93a4b8';
-        svg.innerHTML += `<circle cx="${cx}" cy="${cy}" r="4" fill="${color}" stroke="#0b1420" stroke-width="1"><title>${lm.type || lm.kind || 'landmark'} @ t=${lm.t}s</title></circle>`;
+        const r = matched ? 4.5 : 2.5;
+        svg.innerHTML += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" stroke="#0b1420" stroke-width="1"><title>${matched ? 'detected at a surveyed breaker' : 'unverified detection'} @ t=${lm.t}s${lm.snr !== undefined ? ', snr ' + lm.snr : ''}</title></circle>`;
       });
+
+      if (runData.landmark_summary) {
+        const ls = runData.landmark_summary;
+        svg.innerHTML += `<text x="14" y="24" fill="#e7edf3" font-size="15" font-family="system-ui,sans-serif">Surveyed breakers found: ${ls.found} / ${ls.surveyed_passed}</text>`;
+        svg.innerHTML += `<text x="14" y="44" fill="#93a4b8" font-size="12" font-family="system-ui,sans-serif">${ls.detections} detections, ${ls.at_surveyed} of them at a surveyed breaker</text>`;
+      }
+      if (runData.note) {
+        // one line per clause, stacked up from the bottom edge, so long notes are not clipped
+        const lines = String(runData.note).split('; ');
+        lines.forEach((ln, k) => {
+          const y = 490 - (lines.length - 1 - k) * 15;
+          svg.innerHTML += `<text x="14" y="${y}" fill="#93a4b8" font-size="11" font-family="system-ui,sans-serif">${ln}</text>`;
+        });
+      }
 
       const last = samples[samples.length - 1];
       if (last) {
         const cx = scaleX(last.pred[0]), cy = scaleY(last.pred[1]);
-        const r = Math.max((last.sigma_m || 2) * 2, 3);
-        svg.innerHTML += `<circle class="conf-circle" cx="${cx}" cy="${cy}" r="${r}" />`;
+        // 90% confidence radius in METRES, converted with the same scales as the map.
+        // It used to be sigma*2 in raw SVG pixels, so on a lap-sized map the circle
+        // covered half the panel whatever the real uncertainty was. The map is scaled
+        // separately in x and y, so a true circle on the ground is an ellipse here.
+        const r90 = (last.sigma_m || 2) * 2.146;
+        const rx = Math.max(r90 * (800 - 2 * pad) / (maxX - minX + 1e-6), 3);
+        const ry = Math.max(r90 * (500 - 2 * pad) / (maxY - minY + 1e-6), 3);
+        svg.innerHTML += `<ellipse class="conf-circle" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" />`;
       }
     }
 
