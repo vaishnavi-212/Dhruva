@@ -66,7 +66,14 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var sm: SensorManager
     private var gyro: Sensor? = null
     private var gravitySensor: Sensor? = null
+    private var linAccSensor: Sensor? = null
     private var lastGyroTimeNanos = 0L
+
+    // Speed from the trained model. Null if its assets are missing -- the blackout then carries
+    // the GPS speed held before it, exactly as before.
+    private var speedAi: SpeedEstimator? = null
+    private var aiSteps = 0L
+    private var heldSteps = 0L
 
     // Unit gravity vector in DEVICE coordinates. Needed to work out which way is
     // actually "up" -- raw gyro z is only the vertical axis when the phone lies
@@ -159,6 +166,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         sm = getSystemService(SENSOR_SERVICE) as SensorManager
         gyro = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         gravitySensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
+        linAccSensor = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+        speedAi = try { SpeedEstimator(this) } catch (e: Exception) { null }
 
         // routes.json ships in assets/: several stored routes, no synthetic padding.
         // A route for the wrong area is worse than none, which is why start() is checked.
@@ -229,7 +238,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             }
             blackoutOn = isChecked
             tvMode.text = if (isChecked)
-                "Mode: DEAD RECKONING (simulated)\nholding %.0f km/h".format(lastGoodSpeedMps * 3.6)
+                "Mode: DEAD RECKONING (simulated)\n" +
+                    (if (speedAi != null) "AI speed · fallback %.0f km/h" else "holding %.0f km/h").format(lastGoodSpeedMps * 3.6)
             else "Mode: GNSS"
             paths.setBlackout(isChecked)
 
@@ -248,6 +258,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 // through the outage, the bias estimator would average a MOVING gyro.
                 stationaryNow = false
                 gyroBias.freeze()
+                aiSteps = 0; heldSteps = 0
                 voice?.reset()
                 voice?.say("Satellite signal lost. Switching to inertial navigation.")
 
@@ -329,7 +340,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             summaryDrift.text = "Drift: %.1f%%".format(r.driftPct)
             summarySpeed.text = "Mean speed: %.1f km/h".format(r.meanSpeedMps * 3.6)
             summaryConf.text = "Confidence: ±%.0f m (90%%)".format(r.confidence90M)
-            summaryHz.text = "IMU rate: %.0f Hz".format(r.imuHz)
+            summaryHz.text = "IMU rate: %.0f Hz".format(r.imuHz) + " · speed: " +
+                (if (aiSteps + heldSteps > 0) "%.0f%% AI model".format(100.0 * aiSteps / (aiSteps + heldSteps)) else "n/a")
             summaryCard.visibility = View.VISIBLE
             btnFinishRun.visibility = View.GONE
         }
@@ -362,18 +374,22 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         super.onResume()
         mapView.onResume()
         gyro?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
-        gravitySensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        // gravity at GAME too: the speed model needs all three streams well above 10 Hz
+        gravitySensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+        linAccSensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         voice?.shutdown()
+        speedAi?.close()
     }
 
     override fun onPause() {
         super.onPause()
         mapView.onPause()
         sm.unregisterListener(this)
+        speedAi?.pause()
         // MUST reset. Otherwise the next gyro event after a resume reports a dt
         // of however long the screen was off, and speed * dt teleports the dot
         // across the map in a single straight segment -- the runaway dashed line
@@ -479,6 +495,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        when (event.sensor.type) {
+            Sensor.TYPE_LINEAR_ACCELERATION -> speedAi?.onSensor(ImuFeatures.ACC, event.timestamp, event.values)
+            Sensor.TYPE_GYROSCOPE -> speedAi?.onSensor(ImuFeatures.GYRO, event.timestamp, event.values)
+            Sensor.TYPE_GRAVITY -> speedAi?.onSensor(ImuFeatures.GRAV, event.timestamp, event.values)
+        }
         if (event.sensor.type == Sensor.TYPE_GRAVITY) {
             val n = Math.sqrt(
                 (event.values[0] * event.values[0] + event.values[1] * event.values[1] +
@@ -508,8 +529,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             // If the PHONE's location goes off, there is no truth left to score against.
             val gpsAgeS = if (lastFixMs > 0) (System.currentTimeMillis() - lastFixMs) / 1000 else 0
             val truthNote = if (gpsAgeS > 5) " · REAL GPS LOST ${gpsAgeS}s — score invalid" else ""
+            val aiNote = speedAi?.let {
+                if (it.freshAt(event.timestamp / 1e9)) " · AI speed %.0f km/h (%.0f ms)".format(it.speedMps * 3.6, it.lastInferMs)
+                else " · AI speed warming up %.0f/30 s".format(it.bufferedS)
+            } ?: " · AI speed OFF (model missing)"
             tvSensorStatus.text =
-                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + truthNote
+                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + truthNote
         }
 
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
@@ -526,6 +551,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 gy * gravityUnit[1] +
                 gz * gravityUnit[2]).toDouble()
 
+        // Speed: the trained model when it has a fresh answer, else the GPS speed held at the cut.
+        val nowS = event.timestamp / 1e9
+        val ai = speedAi
+        val speedNow = if (ai != null && ai.freshAt(nowS)) { aiSteps++; ai.speedMps } else { heldSteps++; lastGoodSpeedMps }
+        dr.setSpeed(speedNow)
         val (x, y, radius) = dr.step(yawRate, dt)
         var lat: Double; var lon: Double
         val free = toLatLon(x, y, o0, o1)
@@ -534,7 +564,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         if (roadBindingOn && rb != null && rb.bound) {
             // Constrained to the road: the dot cannot drift sideways at all, and
             // only how far ALONG the road can be wrong.
-            val p = rb.advance(lastGoodSpeedMps, dt)
+            val p = rb.advance(speedNow, dt)
             lat = p.first; lon = p.second
         } else {
             lat = free.first; lon = free.second
