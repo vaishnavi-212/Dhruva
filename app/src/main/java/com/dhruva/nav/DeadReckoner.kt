@@ -40,6 +40,11 @@ class DeadReckoner(
         return Triple(x, y, 2.146 * sigma)
     }
 
+    /** Speed from outside the reckoner: the trained model, or the GPS speed held at the cut. */
+    fun setSpeed(newSpeed: Double) {
+        speed = newSpeed
+    }
+
     fun onGnssFix(newX: Double, newY: Double, newSpeed: Double) {
         x = newX; y = newY; speed = newSpeed
         distanceSinceFix = 0.0   // confidence collapses back to the floor

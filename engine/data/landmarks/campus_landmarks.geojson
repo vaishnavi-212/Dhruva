@@ -1,0 +1,229 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.1268812368054,
+     15.367282920281346
+    ]
+   },
+   "properties": {
+    "id": 1,
+    "role": "landmark",
+    "crossval_m": 199.1,
+    "confirmed": false
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12563106648743,
+     15.36859560009116
+    ]
+   },
+   "properties": {
+    "id": 2,
+    "role": "checkpoint",
+    "crossval_m": 3.4,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12526535128022,
+     15.368886949430959
+    ]
+   },
+   "properties": {
+    "id": 3,
+    "role": "landmark",
+    "crossval_m": 4.5,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.1249230125,
+     15.369631887499999
+    ]
+   },
+   "properties": {
+    "id": 4,
+    "role": "checkpoint",
+    "crossval_m": 2.4,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12478484545453,
+     15.370187763636363
+    ]
+   },
+   "properties": {
+    "id": 5,
+    "role": "landmark",
+    "crossval_m": 1.7,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12461461779378,
+     15.370632540188966
+    ]
+   },
+   "properties": {
+    "id": 6,
+    "role": "checkpoint",
+    "crossval_m": 4.5,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12431076946295,
+     15.37108673306524
+    ]
+   },
+   "properties": {
+    "id": 7,
+    "role": "landmark",
+    "crossval_m": 3.1,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12410767086112,
+     15.371208915259464
+    ]
+   },
+   "properties": {
+    "id": 8,
+    "role": "checkpoint",
+    "crossval_m": 7.4,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12378524975904,
+     15.371267311943086
+    ]
+   },
+   "properties": {
+    "id": 9,
+    "role": "landmark",
+    "crossval_m": 12.7,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12364925095595,
+     15.37128427029406
+    ]
+   },
+   "properties": {
+    "id": 10,
+    "role": "checkpoint",
+    "crossval_m": 2.3,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12295707232667,
+     15.371140990393803
+    ]
+   },
+   "properties": {
+    "id": 11,
+    "role": "landmark",
+    "crossval_m": 1.9,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12291587062097,
+     15.371113580658594
+    ]
+   },
+   "properties": {
+    "id": 12,
+    "role": "checkpoint",
+    "crossval_m": 4.4,
+    "confirmed": true
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12248664272242,
+     15.371068758904753
+    ]
+   },
+   "properties": {
+    "id": 13,
+    "role": "landmark",
+    "crossval_m": 21.6,
+    "confirmed": false
+   }
+  },
+  {
+   "type": "Feature",
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     75.12196639225493,
+     15.370925821476769
+    ]
+   },
+   "properties": {
+    "id": 14,
+    "role": "checkpoint",
+    "crossval_m": 14.1,
+    "confirmed": true
+   }
+  }
+ ]
+}

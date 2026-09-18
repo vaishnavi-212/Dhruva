@@ -16,6 +16,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // ONNX Runtime ships native code for four chip types (132 MB). Real phones from the last
+        // several years are arm64-v8a (32 MB); the other three are emulators and old 32-bit phones.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -43,4 +49,5 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.osmdroid:osmdroid-android:6.1.18")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+    implementation(libs.onnxruntime.android)
 }

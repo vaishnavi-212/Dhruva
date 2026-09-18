@@ -1,0 +1,63 @@
+{
+  "schema_version": "str",
+  "run_id": "str, unique",
+  "source": {
+    "dataset": "str",
+    "file": "str",
+    "hz": "float"
+  },
+  "origin": {
+    "lat": "float",
+    "lon": "float",
+    "note": "local ENU origin; xy are metres from here"
+  },
+  "vehicle": {
+    "class": "car|two_wheeler|auto_rickshaw|bus|pedestrian",
+    "confidence": "0..1"
+  },
+  "mount": {
+    "estimated": "bool",
+    "pitch_deg": "float",
+    "roll_deg": "float",
+    "yaw_deg": "float"
+  },
+  "blackout": {
+    "start_s": "float",
+    "end_s": "float",
+    "distance_m": "float"
+  },
+  "samples": [
+    {
+      "t": "float, seconds from blackout start",
+      "truth": "[x, y] metres, GNSS ground truth (null in a real blackout)",
+      "pred": "[x, y] metres, our estimate",
+      "sigma_m": "float, 1-sigma radius",
+      "terrain": "urban|ghat|highway|unknown",
+      "speed_mps": "float"
+    }
+  ],
+  "landmarks": [
+    {
+      "t": "float",
+      "type": "bump|hump|table|rumble_strip|hairpin",
+      "matched": "bool, did it match a map feature",
+      "map_id": "str|null, e.g. osm:node/123456",
+      "pos": "[x, y] metres",
+      "correction_m": "float, how far the fix moved us",
+      "contributed": "bool, was this written back to the map"
+    }
+  ],
+  "guidance": [
+    {
+      "t": "float",
+      "text": "str, what the voice said",
+      "confidence": "tight|medium|loose"
+    }
+  ],
+  "metrics": {
+    "final_drift_m": "float",
+    "drift_pct": "float",
+    "ate_m": "float",
+    "passes_isro": "bool, drift_pct < 10"
+  }
+}
