@@ -1,0 +1,101 @@
+{
+ "version": 0.6,
+ "elements": [
+  {
+   "type": "node",
+   "id": -1,
+   "lat": 15.367290500000001,
+   "lon": 75.126912375,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "4",
+    "confidence": "0.94"
+   }
+  },
+  {
+   "type": "node",
+   "id": -2,
+   "lat": 15.3685986,
+   "lon": 75.12561278333334,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "6",
+    "confidence": "0.98"
+   }
+  },
+  {
+   "type": "node",
+   "id": -3,
+   "lat": 15.371284150000001,
+   "lon": 75.1236329,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "4",
+    "confidence": "0.94"
+   }
+  },
+  {
+   "type": "node",
+   "id": -4,
+   "lat": 15.371208750000001,
+   "lon": 75.12324542500001,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "4",
+    "confidence": "0.94"
+   }
+  },
+  {
+   "type": "node",
+   "id": -5,
+   "lat": 15.37112934,
+   "lon": 75.12273934,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "5",
+    "confidence": "0.97"
+   }
+  },
+  {
+   "type": "node",
+   "id": -6,
+   "lat": 15.371046,
+   "lon": 75.12231234,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "5",
+    "confidence": "0.97"
+   }
+  },
+  {
+   "type": "node",
+   "id": -7,
+   "lat": 15.37089734,
+   "lon": 75.12198968,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "5",
+    "confidence": "0.97"
+   }
+  },
+  {
+   "type": "node",
+   "id": -8,
+   "lat": 15.3712342,
+   "lon": 75.12407085,
+   "tags": {
+    "traffic_calming": "bump",
+    "source": "Dhruva:crowdsourced",
+    "observations": "2",
+    "confidence": "0.75"
+   }
+  }
+ ]
+}
