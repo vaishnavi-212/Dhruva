@@ -27,6 +27,17 @@ class RouteGuide(points: List<Pair<Double, Double>>) {
 
     class Proj(val s: Double, val offM: Double)
 
+    fun toLocal(lat: Double, lon: Double): Pair<Double, Double> = ((lon - lon0) * kx) to ((lat - lat0) * M_PER_DEG)
+    fun toLatLon(x: Double, y: Double): Pair<Double, Double> = (lat0 + y / M_PER_DEG) to (lon0 + x / kx)
+
+    /** The route from arc [from] to its end, in local metres: what the route guard watches after a cut. */
+    fun ahead(from: Double): Pair<DoubleArray, DoubleArray> {
+        val xs2 = ArrayList<Double>(); val ys2 = ArrayList<Double>()
+        val (x0, y0) = xy(from); xs2.add(x0); ys2.add(y0)
+        for (i in cum.indices) if (cum[i] > from) { xs2.add(xs[i]); ys2.add(ys[i]) }
+        return xs2.toDoubleArray() to ys2.toDoubleArray()
+    }
+
     /**
      * Nearest point on the route to (lat, lon). With [nearS], only the stretch from 60 m behind to
      * 250 m ahead of it is searched, so a route that passes the same road twice does not jump.

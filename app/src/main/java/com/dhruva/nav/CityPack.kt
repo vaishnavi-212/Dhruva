@@ -41,8 +41,12 @@ class CityPack(
     private val segWay: IntArray
     // how many different road points each node connects to, ignoring one-ways: 3+ is a junction
     private val degreeOf: IntArray
+    private val neighbourOf: Array<IntArray>
 
     fun degree(node: Int): Int = degreeOf[node]
+
+    /** Road points joined to [node] by a road, either direction (a rider can physically go either way). */
+    fun neighbours(node: Int): IntArray = neighbourOf[node]
 
     init {
         val n = lat.size
@@ -74,6 +78,7 @@ class CityPack(
         val nb = Array(n) { HashSet<Int>(4) }
         for (i in 0 until nSeg) { nb[segA[i]].add(segB[i]); nb[segB[i]].add(segA[i]) }
         degreeOf = IntArray(n) { nb[it].size }
+        neighbourOf = Array(n) { nb[it].toIntArray().also { a -> a.sort() } }
     }
 
     // search words for every place, worked out once at load (off the main thread) so typing costs
@@ -133,6 +138,46 @@ class CityPack(
                 var length = 0.0
                 for (i in 1 until pts.size) length += metres(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second)
                 return Route(pts, path.toIntArray(), length, d)
+            }
+            for (e in adjStart[u] until adjStart[u + 1]) {
+                val v = adjTo[e]; val nd = d + adjCost[e]
+                if (nd < (dist[v] ?: Double.POSITIVE_INFINITY)) { dist[v] = nd; prev[v] = u; pq.add(nd to v) }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Fastest path from a point on the road a->b, travelling TOWARDS b (the way the rider is going),
+     * to any target. Turning back towards a is allowed but costs [uTurnPenaltyS] extra, so it is chosen
+     * only when going on is much longer. [uTurn] is true when the answer starts by turning back.
+     */
+    class Directed(val route: Route, val uTurn: Boolean)
+
+    fun routeFrom(a: Int, b: Int, pLat: Double, pLon: Double, targets: IntArray, uTurnPenaltyS: Double = 30.0): Directed? {
+        val isTarget = HashSet<Int>(targets.size * 2).apply { targets.forEach { add(it) } }
+        val w = ways.firstOrNull { wy -> (0 until wy.nodes.size - 1).any { k ->
+            (wy.nodes[k] == a && wy.nodes[k + 1] == b) || (wy.nodes[k] == b && wy.nodes[k + 1] == a) } }
+        val f = if (w != null) secondsPerMetre(w) else 3.6 / KMH[5]
+        val dist = HashMap<Int, Double>(); val prev = HashMap<Int, Int>()
+        val pq = PriorityQueue<Pair<Double, Int>>(compareBy<Pair<Double, Int>> { it.first }.thenBy { it.second })
+        dist[b] = metres(pLat, pLon, lat[b], lon[b]) * f; pq.add(dist[b]!! to b)
+        val back = metres(pLat, pLon, lat[a], lon[a]) * f + uTurnPenaltyS
+        if (back < (dist[a] ?: Double.POSITIVE_INFINITY)) { dist[a] = back; pq.add(back to a) }
+        val done = HashSet<Int>()
+        while (pq.isNotEmpty()) {
+            val (d, u) = pq.poll()!!
+            if (!done.add(u)) continue
+            if (u in isTarget) {
+                val path = arrayListOf(u)
+                while (prev.containsKey(path.last())) path.add(prev[path.last()]!!)
+                path.reverse()
+                val pts = ArrayList<Pair<Double, Double>>(path.size + 1)
+                pts.add(pLat to pLon)
+                for (i in path) pts.add(lat[i] to lon[i])
+                var length = 0.0
+                for (i in 1 until pts.size) length += metres(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second)
+                return Directed(Route(pts, path.toIntArray(), length, d), uTurn = path.first() == a)
             }
             for (e in adjStart[u] until adjStart[u + 1]) {
                 val v = adjTo[e]; val nd = d + adjCost[e]

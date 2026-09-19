@@ -118,6 +118,15 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var lastGuideMs = 0L
     private val recentFixes = ArrayDeque<Location>()      // for the rider's direction at a re-route
     private val fixFilter = FixFilter()                   // drops cached and impossible fixes before anything uses them
+    // Wrong turn with GPS off: the gyro watches the planned route ahead of the dot.
+    private var routeNodes: IntArray? = null
+    private var routeGuard: RouteGuard? = null
+    private var rebinder: Rebinder? = null
+    private var guardCutArc = 0.0
+    private var guardT0 = 0.0
+    private var guardLastFeed = 0.0
+    private var guardAlarmT = 0.0
+    private var psiSinceCut = 0.0
 
     private var lat0: Double? = null
     private var lon0: Double? = null
@@ -292,6 +301,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 blackoutEndMs = System.currentTimeMillis()
                 blackoutToIndex = gpsPoints.size
                 gyroBias.unfreeze()          // GNSS is back: keep learning the bias
+                routeGuard = null; rebinder = null   // GPS checks the route again (off-route detector)
             }
 
             if (isChecked) {
@@ -318,6 +328,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     paths.startPredicted(loc.latitude, loc.longitude)   // a NEW line
                     predPoints.add(loc.latitude to loc.longitude)
                     if (roadBindingOn) bindRoad(loc)
+                    armRouteGuard()
                 }
             }
         }
@@ -433,6 +444,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         val g = RouteGuide(r.points)
         guide = g
+        routeNodes = r.nodes
         navigator = Navigator(place.name, g, Maneuver.fromRoute(g, r.nodes) { city?.degree(it) ?: 2 })
         progressS = 0.0
         offRoute.reset()
@@ -447,6 +459,76 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         voice?.say(if (uTurn) "Re-routing. Make a U-turn." else "Re-routing.")
         android.util.Log.i("DhruvaNav", "re-routed to ${place.name}: %.0f m, u-turn=$uTurn".format(g.lengthM))
         tvErrorLabel.text = if (uTurn) "Re-routed · make a U-turn" else "Re-routed"
+    }
+
+    /** At the cut: watch the planned route ahead of the dot for a turn the rider did not follow. */
+    private fun armRouteGuard() {
+        val g = guide; val rb = road
+        routeGuard = null; rebinder = null
+        if (planned == null || g == null || rb == null || !rb.bound || !roadBindingOn) return
+        guardCutArc = rb.arcM
+        val (ax, ay) = g.ahead(guardCutArc)
+        if (ax.size < 2) return
+        routeGuard = RouteGuard(ax, ay)
+        psiSinceCut = 0.0; guardT0 = Double.NaN; guardLastFeed = 0.0
+    }
+
+    private fun watchForWrongTurn(nowS: Double, rb: RoadBinder) {
+        val guard = routeGuard ?: return
+        if (guardT0.isNaN()) guardT0 = nowS
+        val t = nowS - guardT0
+        if (t - guardLastFeed < 0.1 && guard.size > 0) return
+        guardLastFeed = t
+        val since = rb.arcM - guardCutArc
+        if (guard.add(t, since, psiSinceCut)) {
+            voice?.say("Wrong turn.")
+            android.util.Log.i("DhruvaNav", "wrong turn: %.0f m after the cut".format(since))
+            tvErrorLabel.text = "Wrong turn — finding the road you took…"
+            val c = city; val g = guide; val nodes = routeNodes
+            rebinder = if (c != null && g != null && nodes != null) Rebinder(c, g, nodes, guardCutArc, guard).takeIf { it.hasCandidates } else null
+            guardAlarmT = t
+            if (rebinder == null) { tvErrorLabel.text = "Off route — no side road found here"; routeGuard = null }
+            return
+        }
+        val rbd = rebinder ?: return
+        if (since < rbd.readyAtSinceCut && t - guardAlarmT < Rebinder.MAX_WAIT_S) return
+        rebinder = null; routeGuard = null
+        val choice = rbd.choose() ?: return
+        rerouteFromBranch(choice, rb.arcM)
+    }
+
+    /** Put the dot on the road the rider actually took and route from there, still with GPS off. */
+    private fun rerouteFromBranch(choice: Rebinder.Choice, routeArc: Double) {
+        val c = city ?: return; val g = guide ?: return; val p = planned ?: return
+        val (x, y) = choice.road.xyAt(routeArc)
+        val (la, lo) = g.toLatLon(x, y)
+        var k = 0; var bd = Double.MAX_VALUE
+        for (i in 0 until choice.branch.size - 1) {
+            val d = CityPack.metres(la, lo, c.lat[choice.branch[i + 1]], c.lon[choice.branch[i + 1]])
+            if (d < bd) { bd = d; k = i }
+        }
+        val a = choice.branch[k]; val b = choice.branch[k + 1]
+        Thread {
+            val d = c.routeFrom(a, b, la, lo, p.place.arrive)
+            runOnUiThread {
+                if (d == null || !blackoutOn) return@runOnUiThread
+                routeLine?.let { mapView.overlays.remove(it) }
+                val np = PlannedRoute(p.place, d.route)
+                planned = np
+                routeLine = np.draw(mapView, zoomToFit = false)
+                road = try { RoadBinder(np.toRouteJson()).also { it.select(0) } } catch (e: Exception) { null }
+                road?.start(la, lo, null)
+                val ng = RouteGuide(d.route.points)
+                guide = ng; routeNodes = d.route.nodes
+                navigator = Navigator(p.place.name, ng, Maneuver.fromRoute(ng, d.route.nodes) { c.degree(it) })
+                progressS = 0.0
+                armRouteGuard()                            // a second wrong turn is caught too
+                voice?.say(if (d.uTurn) "Re-routing. Make a U-turn." else "Re-routing.")
+                tvErrorLabel.text = "Re-routed from the road you took (gyro %+.0f°)%s".format(choice.gyroDeg, if (d.uTurn) " · make a U-turn" else "")
+                android.util.Log.i("DhruvaNav", "wrong-turn re-route: %.0f m, u-turn=%s, %d candidate road(s), gyro %.0f vs road %.0f"
+                    .format(d.route.lengthM, d.uTurn, choice.candidates, choice.gyroDeg, choice.pathDeg))
+            }
+        }.start()
     }
 
     /** Direction the rider is moving (radians, counter-clockwise from east), from the last ~10 m of real fixes. */
@@ -719,6 +801,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         }
 
         placeDot(lat, lon, isBlue = false, radiusM = radius)
+
+        // Wrong turn with GPS off: integrate the gyro, feed the route guard 10 times a second.
+        psiSinceCut += yawRate * dt
+        if (routeGuard != null && rb != null && rb.bound) watchForWrongTurn(nowS, rb)
 
         // Keep guiding with GPS off: the dot's distance along the planned route drives the voice.
         val nav = navigator
