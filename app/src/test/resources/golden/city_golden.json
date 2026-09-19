@@ -1,0 +1,684 @@
+{
+ "pack": "city_pack_hubli.json",
+ "from_lat": 15.3693,
+ "from_lon": 75.1219,
+ "routes": [
+  {
+   "lat": 15.3693,
+   "lon": 75.1219,
+   "place": 769,
+   "name": "Unakal Kere",
+   "reachable": true,
+   "length_m": 1483.146321817186,
+   "seconds": 174.65641471989716,
+   "n_points": 70,
+   "end": [
+    15.3772159,
+    75.1133633
+   ]
+  },
+  {
+   "lat": 15.335478856196188,
+   "lon": 75.154379126782,
+   "place": 358,
+   "name": "Karnataka Bank",
+   "reachable": true,
+   "length_m": 6159.439142407964,
+   "seconds": 672.1559810841954,
+   "n_points": 201,
+   "end": [
+    15.3658045,
+    75.1228366
+   ]
+  },
+  {
+   "lat": 15.357274390623243,
+   "lon": 75.15465824856787,
+   "place": 440,
+   "name": "Madhura Colony",
+   "reachable": true,
+   "length_m": 981.5063522917675,
+   "seconds": 149.8349949067763,
+   "n_points": 27,
+   "end": [
+    15.3636345,
+    75.1552712
+   ]
+  },
+  {
+   "lat": 15.402158721357807,
+   "lon": 75.07020735784069,
+   "place": 77,
+   "name": "Big Mishra Pedha",
+   "reachable": false,
+   "length_m": null,
+   "seconds": null,
+   "n_points": null,
+   "end": null
+  },
+  {
+   "lat": 15.352126369936157,
+   "lon": 75.07859169697731,
+   "place": 805,
+   "name": "Vijaya Bank",
+   "reachable": true,
+   "length_m": 8685.676855192383,
+   "seconds": 1000.5167106137773,
+   "n_points": 163,
+   "end": [
+    15.3591763,
+    75.1462121
+   ]
+  },
+  {
+   "lat": 15.379440744282242,
+   "lon": 75.13240195660954,
+   "place": 570,
+   "name": "Rail Kalyana Kendra",
+   "reachable": true,
+   "length_m": 5375.29263540749,
+   "seconds": 674.6046623350188,
+   "n_points": 147,
+   "end": [
+    15.3528237,
+    75.1570844
+   ]
+  },
+  {
+   "lat": 15.367181488604036,
+   "lon": 75.16052453590217,
+   "place": 217,
+   "name": "Government College",
+   "reachable": true,
+   "length_m": 2688.7250479388163,
+   "seconds": 397.27604981935013,
+   "n_points": 93,
+   "end": [
+    15.3753469,
+    75.1441992
+   ]
+  },
+  {
+   "lat": 15.332811651757416,
+   "lon": 75.09580040843534,
+   "place": 79,
+   "name": "Block A",
+   "reachable": true,
+   "length_m": 9279.59884319883,
+   "seconds": 1118.7362822727607,
+   "n_points": 225,
+   "end": [
+    15.3638556,
+    75.1559042
+   ]
+  },
+  {
+   "lat": 15.347306481105823,
+   "lon": 75.13911983282888,
+   "place": 37,
+   "name": "Ashok Nagar",
+   "reachable": true,
+   "length_m": 2703.2847308112523,
+   "seconds": 378.82405699380587,
+   "n_points": 77,
+   "end": [
+    15.3673258,
+    75.138309
+   ]
+  },
+  {
+   "lat": 15.343696963696217,
+   "lon": 75.16951626761205,
+   "place": 782,
+   "name": "Urban Primary Health Centre",
+   "reachable": true,
+   "length_m": 12658.208514605809,
+   "seconds": 1577.174568221796,
+   "n_points": 415,
+   "end": [
+    15.3956448,
+    75.0819324
+   ]
+  },
+  {
+   "lat": 15.38051180480388,
+   "lon": 75.15710740981739,
+   "place": 179,
+   "name": "Eidgah Maidan",
+   "reachable": true,
+   "length_m": 4082.0404143328574,
+   "seconds": 481.27001591582246,
+   "n_points": 94,
+   "end": [
+    15.3504174,
+    75.1389313
+   ]
+  },
+  {
+   "lat": 15.372375899161831,
+   "lon": 75.13476013988958,
+   "place": 794,
+   "name": "Vibha Multi-specialty Clinic",
+   "reachable": true,
+   "length_m": 2510.4075126146386,
+   "seconds": 379.3390912355257,
+   "n_points": 80,
+   "end": [
+    15.360407,
+    75.1481248
+   ]
+  },
+  {
+   "lat": 15.33762419825028,
+   "lon": 75.15072949638622,
+   "place": 596,
+   "name": "Reliance Trends",
+   "reachable": true,
+   "length_m": 5820.715070949555,
+   "seconds": 763.7052830288686,
+   "n_points": 198,
+   "end": [
+    15.3492888,
+    75.1110202
+   ]
+  },
+  {
+   "lat": 15.36877608562752,
+   "lon": 75.13274328899945,
+   "place": 240,
+   "name": "Hanuman Temple",
+   "reachable": true,
+   "length_m": 2043.9520493901275,
+   "seconds": 311.27236865833174,
+   "n_points": 62,
+   "end": [
+    15.3662026,
+    75.1481507
+   ]
+  },
+  {
+   "lat": 15.35086750982653,
+   "lon": 75.08646946483641,
+   "place": 456,
+   "name": "Manikbag Automobiles TATA Motors",
+   "reachable": true,
+   "length_m": 5747.872468197515,
+   "seconds": 765.6389055628784,
+   "n_points": 148,
+   "end": [
+    15.3696044,
+    75.119196
+   ]
+  },
+  {
+   "lat": 15.36951467098348,
+   "lon": 75.13258528761345,
+   "place": 26,
+   "name": "Andhra Bank",
+   "reachable": true,
+   "length_m": 1019.9281211077199,
+   "seconds": 181.36750535827863,
+   "n_points": 18,
+   "end": [
+    15.3674368,
+    75.140488
+   ]
+  },
+  {
+   "lat": 15.354784281681928,
+   "lon": 75.12088492600493,
+   "place": 770,
+   "name": "Union Bank of India",
+   "reachable": true,
+   "length_m": 3252.655370344993,
+   "seconds": 356.19465841811103,
+   "n_points": 96,
+   "end": [
+    15.3524914,
+    75.1437819
+   ]
+  },
+  {
+   "lat": 15.34295812281526,
+   "lon": 75.13641407805427,
+   "place": 464,
+   "name": "Maruti Hostel",
+   "reachable": true,
+   "length_m": 3604.1287763872433,
+   "seconds": 379.76036128189,
+   "n_points": 125,
+   "end": [
+    15.3663394,
+    75.1208712
+   ]
+  },
+  {
+   "lat": 15.386172504881099,
+   "lon": 75.10744069754048,
+   "place": 576,
+   "name": "Railway Hospital, Hubli",
+   "reachable": true,
+   "length_m": 6975.733330439278,
+   "seconds": 738.4241126478356,
+   "n_points": 246,
+   "end": [
+    15.3531518,
+    75.1492098
+   ]
+  },
+  {
+   "lat": 15.380454731510424,
+   "lon": 75.14535342094909,
+   "place": 406,
+   "name": "KLE Society's Shri Kadasiddeshwar Arts College and H S Kotambri Science Institute",
+   "reachable": true,
+   "length_m": 3781.707939477346,
+   "seconds": 650.0380367471197,
+   "n_points": 131,
+   "end": [
+    15.3657092,
+    75.123302
+   ]
+  },
+  {
+   "lat": 15.352820226681754,
+   "lon": 75.1563245166666,
+   "place": 349,
+   "name": "Kamakshi Temple",
+   "reachable": true,
+   "length_m": 2423.0769319580622,
+   "seconds": 284.8976591755912,
+   "n_points": 45,
+   "end": [
+    15.3581344,
+    75.137018
+   ]
+  },
+  {
+   "lat": 15.358736353121905,
+   "lon": 75.09266601041938,
+   "place": 49,
+   "name": "Axis Bank ATM",
+   "reachable": true,
+   "length_m": 6510.1057485662295,
+   "seconds": 797.9454364741553,
+   "n_points": 121,
+   "end": [
+    15.3487252,
+    75.1397695
+   ]
+  },
+  {
+   "lat": 15.361116148959507,
+   "lon": 75.10290871818799,
+   "place": 352,
+   "name": "Kamat",
+   "reachable": true,
+   "length_m": 4996.476568006121,
+   "seconds": 592.1436745812816,
+   "n_points": 149,
+   "end": [
+    15.3503047,
+    75.137904
+   ]
+  },
+  {
+   "lat": 15.360579687743776,
+   "lon": 75.12673977674385,
+   "place": 697,
+   "name": "St. John's Church",
+   "reachable": true,
+   "length_m": 4044.6840924735084,
+   "seconds": 419.4118504758499,
+   "n_points": 113,
+   "end": [
+    15.3528676,
+    75.1561295
+   ]
+  },
+  {
+   "lat": 15.364035761116922,
+   "lon": 75.13932736091799,
+   "place": 710,
+   "name": "State Bank of India",
+   "reachable": true,
+   "length_m": 1431.4450060720685,
+   "seconds": 240.63071030634111,
+   "n_points": 40,
+   "end": [
+    15.3705973,
+    75.1295328
+   ]
+  },
+  {
+   "lat": 15.343226542153175,
+   "lon": 75.15757163852189,
+   "place": 232,
+   "name": "Government Veterinary Hospital",
+   "reachable": true,
+   "length_m": 5599.646172228798,
+   "seconds": 755.2525452607752,
+   "n_points": 185,
+   "end": [
+    15.3748875,
+    75.14406
+   ]
+  },
+  {
+   "lat": 15.3582880527658,
+   "lon": 75.10648463492169,
+   "place": 709,
+   "name": "State Bank of India",
+   "reachable": true,
+   "length_m": 5467.301785834621,
+   "seconds": 640.0575838025633,
+   "n_points": 153,
+   "end": [
+    15.3477326,
+    75.1423159
+   ]
+  },
+  {
+   "lat": 15.386456080372366,
+   "lon": 75.07616012378254,
+   "place": 344,
+   "name": "JP Nagar",
+   "reachable": true,
+   "length_m": 10736.745220833698,
+   "seconds": 1348.1258659995751,
+   "n_points": 305,
+   "end": [
+    15.3475519,
+    75.106834
+   ]
+  },
+  {
+   "lat": 15.346412703131902,
+   "lon": 75.12235992292813,
+   "place": 314,
+   "name": "Indian Overseas Bank",
+   "reachable": true,
+   "length_m": 2580.912870835874,
+   "seconds": 375.2892444263121,
+   "n_points": 84,
+   "end": [
+    15.3622145,
+    75.1183312
+   ]
+  },
+  {
+   "lat": 15.393137453141529,
+   "lon": 75.19524900415513,
+   "place": 600,
+   "name": "RN Shetty Group",
+   "reachable": true,
+   "length_m": 13317.843890131571,
+   "seconds": 1554.2867431910108,
+   "n_points": 305,
+   "end": [
+    15.3509894,
+    75.1068078
+   ]
+  },
+  {
+   "lat": 15.387912447203135,
+   "lon": 75.07257877464494,
+   "place": 518,
+   "name": "Nrupathunga Betta View Point",
+   "reachable": true,
+   "length_m": 8838.170954098063,
+   "seconds": 1189.0661258598711,
+   "n_points": 266,
+   "end": [
+    15.3771985,
+    75.128144
+   ]
+  },
+  {
+   "lat": 15.33551054156979,
+   "lon": 75.14180716638626,
+   "place": 458,
+   "name": "Manjunath Nagar Primary School",
+   "reachable": true,
+   "length_m": 5198.108559063786,
+   "seconds": 688.9561853104103,
+   "n_points": 169,
+   "end": [
+    15.3473366,
+    75.1039431
+   ]
+  },
+  {
+   "lat": 15.355627506360241,
+   "lon": 75.13201615904595,
+   "place": 118,
+   "name": "Chini Mini",
+   "reachable": true,
+   "length_m": 1388.2429820827927,
+   "seconds": 167.62998043800917,
+   "n_points": 54,
+   "end": [
+    15.3604744,
+    75.1268752
+   ]
+  },
+  {
+   "lat": 15.393691588980314,
+   "lon": 75.0780507488199,
+   "place": 21,
+   "name": "Anand Hostel",
+   "reachable": true,
+   "length_m": 7528.905977656371,
+   "seconds": 833.1838709858407,
+   "n_points": 233,
+   "end": [
+    15.3618634,
+    75.1276433
+   ]
+  },
+  {
+   "lat": 15.345988629641527,
+   "lon": 75.11623666997733,
+   "place": 316,
+   "name": "Indian Overseas Bank",
+   "reachable": true,
+   "length_m": 10028.79371799854,
+   "seconds": 1116.4615495871035,
+   "n_points": 296,
+   "end": [
+    15.3931825,
+    75.0822328
+   ]
+  },
+  {
+   "lat": 15.341221714576907,
+   "lon": 75.11555664470194,
+   "place": 712,
+   "name": "State Bank of India",
+   "reachable": true,
+   "length_m": 2770.8730304573855,
+   "seconds": 383.280624510139,
+   "n_points": 66,
+   "end": [
+    15.3525683,
+    75.0963734
+   ]
+  },
+  {
+   "lat": 15.340757690515547,
+   "lon": 75.09708200713875,
+   "place": 158,
+   "name": "Domino's",
+   "reachable": true,
+   "length_m": 5458.381731576356,
+   "seconds": 777.1213913314402,
+   "n_points": 145,
+   "end": [
+    15.3670593,
+    75.1208506
+   ]
+  },
+  {
+   "lat": 15.336370446720693,
+   "lon": 75.11007900828128,
+   "place": 408,
+   "name": "KLE Speciality Hospital",
+   "reachable": true,
+   "length_m": 4677.806954459086,
+   "seconds": 584.894618170963,
+   "n_points": 124,
+   "end": [
+    15.3520919,
+    75.1376078
+   ]
+  },
+  {
+   "lat": 15.368770594751098,
+   "lon": 75.12115088303479,
+   "place": 829,
+   "name": "Working Womens Hostel",
+   "reachable": true,
+   "length_m": 2177.101570066339,
+   "seconds": 346.9309692470064,
+   "n_points": 71,
+   "end": [
+    15.3761473,
+    75.1246055
+   ]
+  },
+  {
+   "lat": 15.368485780861079,
+   "lon": 75.11211479696121,
+   "place": 660,
+   "name": "Shobha Maternity Hospital",
+   "reachable": true,
+   "length_m": 5819.349733059932,
+   "seconds": 739.9204958231057,
+   "n_points": 211,
+   "end": [
+    15.3448742,
+    75.1473055
+   ]
+  },
+  {
+   "lat": 15.373831539506194,
+   "lon": 75.10573587611962,
+   "place": 346,
+   "name": "Jumma Masjid",
+   "reachable": true,
+   "length_m": 7014.7945049330765,
+   "seconds": 895.0440570248059,
+   "n_points": 257,
+   "end": [
+    15.3344065,
+    75.1313167
+   ]
+  }
+ ],
+ "searches": [
+  {
+   "query": "unkal lake",
+   "top": [
+    "Unakal Kere",
+    "Unkal Lake BRT Station"
+   ]
+  },
+  {
+   "query": "unakal kere",
+   "top": [
+    "Unakal Kere",
+    "Unkal Lake BRT Station"
+   ]
+  },
+  {
+   "query": "kle tech",
+   "top": [
+    "KLE Technological University",
+    "KLE Tech. Canteen",
+    "KLE Tech Ground",
+    "KLE Tech Boys Hostel",
+    "KLE Institute of Technology"
+   ]
+  },
+  {
+   "query": "lhc",
+   "top": [
+    "LHC"
+   ]
+  },
+  {
+   "query": "railway station",
+   "top": [
+    "Hubli Railway Station",
+    "Hubballi Railway BRT Station"
+   ]
+  },
+  {
+   "query": "hospital",
+   "top": [
+    "Hubli Super Speciality Hospital",
+    "Spandan Hospital and Infertility Center",
+    "Maathoshree Hospital",
+    "Sushruta Multispeciality Hospital and Research Center Pvt. Ltd.,",
+    "Karnataka Medical College Hospital Blood Bank"
+   ]
+  },
+  {
+   "query": "unka",
+   "top": [
+    "Unkal",
+    "Unakal",
+    "Unkal Station Main Building",
+    "Unkal Village BRT Station",
+    "Unkal Masjid"
+   ]
+  },
+  {
+   "query": "bvb",
+   "top": [
+    "BVB College BRT Station",
+    "BVB Junior boys hostel"
+   ]
+  },
+  {
+   "query": "brt",
+   "top": [
+    "BVB College BRT Station",
+    "Unakal Cross BRT Station",
+    "Vidyanagar BRT Station",
+    "Unkal Village BRT Station",
+    "KIMS BRT Station"
+   ]
+  },
+  {
+   "query": "park",
+   "top": [
+    "Park",
+    "Sirur Park",
+    "Vidhya Nagar Park",
+    "Nrupathunga Betta Park",
+    "Nrupathunga Hill Park"
+   ]
+  },
+  {
+   "query": "bank",
+   "top": [
+    "State Bank of India",
+    "State Bank of India",
+    "HDFC Bank",
+    "State Bank of India",
+    "State Bank of India"
+   ]
+  },
+  {
+   "query": "vidyanagar",
+   "top": [
+    "Vidyanagar",
+    "Vidyanagar Police Station",
+    "Vidyanagar BRT Station",
+    "Vidyaniketan P.U. College Vidyanagar",
+    "Vidyanagara Post Office"
+   ]
+  }
+ ]
+}
