@@ -117,6 +117,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var lastRerouteMs = 0L
     private var lastGuideMs = 0L
     private val recentFixes = ArrayDeque<Location>()      // for the rider's direction at a re-route
+    private val fixFilter = FixFilter()                   // drops cached and impossible fixes before anything uses them
 
     private var lat0: Double? = null
     private var lon0: Double? = null
@@ -545,6 +546,14 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         fused.requestLocationUpdates(req, object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
+                // A cached fix from before this screen opened, or a jump no vehicle can make, must
+                // never reach the map, the route or the score.
+                val ageS = (android.os.SystemClock.elapsedRealtimeNanos() - loc.elapsedRealtimeNanos) / 1e9
+                when (fixFilter.check(loc.latitude, loc.longitude, loc.time, ageS)) {
+                    FixFilter.Verdict.STALE, FixFilter.Verdict.GLITCH -> return
+                    FixFilter.Verdict.NEW_TRACK -> { paths.breakTruth(); recentFixes.clear(); lastAcceptedGps = null }
+                    FixFilter.Verdict.ACCEPT -> {}
+                }
 
                 // GPS jitter fix: only treat this fix as real movement if it moved
                 // further than a capped noise floor. Standing still with 15m

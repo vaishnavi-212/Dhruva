@@ -21,7 +21,10 @@ import org.osmdroid.views.overlay.Polyline
  */
 class LivePathOverlay(private val map: MapView) {
 
-    private val truth = Polyline(map).apply {
+    private var truth = newTruth()
+    private val truthSegments = mutableListOf(truth)
+
+    private fun newTruth() = Polyline(map).apply {
         outlinePaint.color = Color.parseColor("#2471A3")
         outlinePaint.strokeWidth = 9f
     }
@@ -74,6 +77,18 @@ class LivePathOverlay(private val map: MapView) {
         refreshGap()
     }
 
+    /**
+     * The next fix starts a NEW blue line: after a pause, or when the first fix was wrong. Joining
+     * them drew a straight streak across the map (20 Sept).
+     */
+    fun breakTruth() {
+        if (truth.actualPoints.isEmpty()) return
+        val seg = newTruth()
+        map.overlays.add(map.overlays.indexOf(truth) + 1, seg)
+        truthSegments.add(seg)
+        truth = seg
+    }
+
     fun addTruth(lat: Double, lon: Double) {
         val p = GeoPoint(lat, lon)
         lastTruth = p
@@ -116,6 +131,8 @@ class LivePathOverlay(private val map: MapView) {
     fun clear() {
         segments.forEach { map.overlays.remove(it) }
         segments.clear(); current = null
+        truthSegments.drop(1).forEach { map.overlays.remove(it) }
+        truth = truthSegments.first(); truthSegments.retainAll(listOf(truth))
         truth.setPoints(emptyList()); gap.setPoints(emptyList())
         lastTruth = null; lastPred = null; armed = false; dropped = 0
         map.invalidate()
