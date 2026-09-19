@@ -28,7 +28,8 @@ class CityPack(
 ) {
     class Way(val nodes: IntArray, val cls: Int, val oneway: Int, val private: Boolean)
     class Place(val name: String, val alt: String, val kind: String, val lat: Double, val lon: Double, val arrive: IntArray)
-    class Route(val points: List<Pair<Double, Double>>, val lengthM: Double, val seconds: Double)
+    /** [nodes] are the road nodes of points[1..]; points[0] is the start, snapped onto the road. */
+    class Route(val points: List<Pair<Double, Double>>, val nodes: IntArray, val lengthM: Double, val seconds: Double)
 
     // adjacency in flat arrays, in the same order Python builds its lists
     private val adjStart: IntArray
@@ -38,6 +39,10 @@ class CityPack(
     private val segA: IntArray
     private val segB: IntArray
     private val segWay: IntArray
+    // how many different road points each node connects to, ignoring one-ways: 3+ is a junction
+    private val degreeOf: IntArray
+
+    fun degree(node: Int): Int = degreeOf[node]
 
     init {
         val n = lat.size
@@ -66,6 +71,9 @@ class CityPack(
                 segA[s] = a; segB[s] = b; segWay[s] = wi; s++
             }
         }
+        val nb = Array(n) { HashSet<Int>(4) }
+        for (i in 0 until nSeg) { nb[segA[i]].add(segB[i]); nb[segB[i]].add(segA[i]) }
+        degreeOf = IntArray(n) { nb[it].size }
     }
 
     // search words for every place, worked out once at load (off the main thread) so typing costs
@@ -124,7 +132,7 @@ class CityPack(
                 for (i in path) pts.add(lat[i] to lon[i])
                 var length = 0.0
                 for (i in 1 until pts.size) length += metres(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second)
-                return Route(pts, length, d)
+                return Route(pts, path.toIntArray(), length, d)
             }
             for (e in adjStart[u] until adjStart[u + 1]) {
                 val v = adjTo[e]; val nd = d + adjCost[e]
