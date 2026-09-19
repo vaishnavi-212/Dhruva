@@ -68,6 +68,12 @@ class CityPack(
         }
     }
 
+    // search words for every place, worked out once at load (off the main thread) so typing costs
+    // only comparisons
+    private val placeWords: List<List<String>> = places.map { tokens(it.name + " " + it.alt) }
+    private val nameLengths: List<List<Int>> =
+        places.map { p -> listOf(p.name, p.alt).filter { it.isNotEmpty() }.map { tokens(it).size } }
+
     class Snap(val a: Int, val b: Int, val t: Double, val distM: Double, val way: Int)
 
     /** Nearest point on any road. */
@@ -135,7 +141,7 @@ class CityPack(
         class Hit(val score: Int, val d: Double, val i: Int)
         val out = ArrayList<Hit>()
         for ((i, p) in places.withIndex()) {
-            val words = tokens(p.name + " " + p.alt)
+            val words = placeWords[i]
             var score = 0; var ok = true
             for ((k, q) in qt.withIndex()) {
                 val m = words.maxOfOrNull { tokenMatch(q, it, k == qt.size - 1) } ?: 0
@@ -143,7 +149,7 @@ class CityPack(
                 score += m
             }
             if (!ok) continue
-            if (listOf(p.name, p.alt).any { it.isNotEmpty() && tokens(it).size == qt.size }) score += 1
+            if (nameLengths[i].any { it == qt.size }) score += 1
             val d = if (la != null && lo != null) metres(la, lo, p.lat, p.lon) else 0.0
             out.add(Hit(score, d, i))
         }
