@@ -28,6 +28,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
+import org.osmdroid.views.overlay.Polyline
 
 class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
@@ -103,6 +104,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var btnRoute: Button
     private lateinit var btnSaveRoute: Button
 
+    // Destination: search a place, route to it offline, bind the dot to that route.
+    private lateinit var btnWhereTo: Button
+    private var city: CityPack? = null
+    private var planned: PlannedRoute? = null
+    private var routeLine: Polyline? = null
+
     private var lat0: Double? = null
     private var lon0: Double? = null
     private var deadReckoner: DeadReckoner? = null
@@ -148,6 +155,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         btnCloseSummary = findViewById(R.id.btnCloseSummary)
         btnRoute = findViewById(R.id.btnRoute)
         btnSaveRoute = findViewById(R.id.btnSaveRoute)
+        btnWhereTo = findViewById(R.id.btnWhereTo)
 
         mapView.setTileSource(TileSourceFactory.MAPNIK)
         mapView.setMultiTouchControls(true)
@@ -187,6 +195,29 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             if (roadBindingOn) lastAcceptedGps?.let { bindRoad(it) }
         }
 
+        // The city pack is 1.15 MB of roads and places: read it off the main thread.
+        Thread {
+            val c = try { CityPack.fromAssets(this) } catch (e: Exception) { null }
+            runOnUiThread {
+                city = c
+                btnWhereTo.isEnabled = c != null
+                btnWhereTo.text = if (c != null) "Where to?" else "No city map"
+            }
+        }.start()
+
+        btnWhereTo.setOnClickListener {
+            val c = city ?: return@setOnClickListener
+            if (blackoutOn) {
+                Toast.makeText(this, "Choose the destination before cutting GPS", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val fix = lastAcceptedGps ?: run {
+                Toast.makeText(this, "Waiting for a GPS fix — the route starts from where you are", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            DestinationPicker.show(this, c, fix.latitude, fix.longitude) { place -> planTo(place) }
+        }
+
         btnSaveRoute.setOnClickListener {
             if (blackoutOn) {
                 Toast.makeText(this, "Save the route after GPS is back on", Toast.LENGTH_SHORT).show()
@@ -198,6 +229,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     .format(RouteStore.MIN_ROUTE_M), Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
+            clearPlan()                              // a learned route replaces a planned one
             road = try { RoadBinder(RouteStore.combinedJson(this)) } catch (e: Exception) { null }
             road?.select(0)                          // the route just learned is listed first
             btnRoute.text = road?.selectionLabel() ?: "Route: none"
@@ -354,11 +386,57 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         startGpsUpdates()
     }
 
+    /**
+     * Route from the last good fix to [place], draw it, and bind the dot to it.
+     * From here on the planned route IS the road the blackout rides on.
+     */
+    private fun planTo(place: CityPack.Place) {
+        val c = city ?: return
+        val fix = lastAcceptedGps ?: return
+        btnWhereTo.text = "Routing to ${place.name}…"
+        // Routing searches 34,000 road points: off the main thread, so the screen never freezes.
+        Thread {
+            val r = c.route(fix.latitude, fix.longitude, place.arrive)
+            runOnUiThread { applyRoute(place, fix, r) }
+        }.start()
+    }
+
+    private fun applyRoute(place: CityPack.Place, fix: Location, r: CityPack.Route?) {
+        if (blackoutOn) {                                   // GPS was cut while routing: keep what we had
+            btnWhereTo.text = planned?.let { "→ " + it.label } ?: "Where to?"
+            return
+        }
+        if (r == null || r.points.size < 2) {
+            btnWhereTo.text = planned?.let { "→ " + it.label } ?: "Where to?"
+            Toast.makeText(this, "No road route to ${place.name} from here", Toast.LENGTH_LONG).show()
+            return
+        }
+        clearPlan()
+        val p = PlannedRoute(place, r)
+        planned = p
+        routeLine = p.draw(mapView)
+        road = try { RoadBinder(p.toRouteJson()).also { it.select(0) } } catch (e: Exception) { null }
+        btnRoute.text = road?.selectionLabel() ?: "Route: none"
+        btnWhereTo.text = "→ " + p.label
+        roadBindingOn = true
+        switchRoadBinding.isChecked = true
+        bindRoad(fix)
+        voice?.say("Route to %s. %.1f kilometres.".format(place.name, p.lengthKm))
+    }
+
+    private fun clearPlan() {
+        routeLine?.let { mapView.overlays.remove(it); mapView.invalidate() }
+        routeLine = null
+        planned = null
+        btnWhereTo.text = if (city != null) "Where to?" else btnWhereTo.text
+    }
+
     /** Bind to a route from a GOOD fix, and say exactly what happened. */
     private fun bindRoad(loc: Location) {
         val rb = road ?: return
         // Bearing decides which way along the route we travel; below ~1 m/s it is noise.
-        val bearing = if (loc.hasBearing() && loc.speed > 1f) loc.bearing else null
+        // A planned route is already in travel order, so it is always ridden forwards.
+        val bearing = if (planned == null && loc.hasBearing() && loc.speed > 1f) loc.bearing else null
         if (rb.start(loc.latitude, loc.longitude, bearing)) {
             tvErrorLabel.text = "bound to %s (%.0f m off, %s)".format(
                 rb.routeName, rb.snapDistanceM, if (rb.direction > 0) "forward" else "reverse")
