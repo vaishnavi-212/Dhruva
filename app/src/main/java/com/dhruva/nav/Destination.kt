@@ -41,7 +41,7 @@ class PlannedRoute(val place: CityPack.Place, val route: CityPack.Route) {
     }
 
     /** The planned route drawn under the dot: a wide teal line, like any navigation app. */
-    fun draw(map: MapView): Polyline {
+    fun draw(map: MapView, zoomToFit: Boolean = true): Polyline {
         val line = Polyline(map).apply {
             setPoints(route.points.map { GeoPoint(it.first, it.second) })
             outlinePaint.color = Color.parseColor("#B34CD3C2")      // dhruva_teal, 70% opaque
@@ -49,7 +49,7 @@ class PlannedRoute(val place: CityPack.Place, val route: CityPack.Route) {
             outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
         }
         map.overlays.add(0, line)                                     // under the dot and the paths
-        map.zoomToBoundingBox(BoundingBox.fromGeoPoints(line.actualPoints).increaseByScale(1.3f), true)
+        if (zoomToFit) map.zoomToBoundingBox(BoundingBox.fromGeoPoints(line.actualPoints).increaseByScale(1.3f), true)
         map.invalidate()
         return line
     }
