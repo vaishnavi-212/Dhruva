@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Radial dark backdrop that mimics the dashboard's glow-from-top-center look -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:type="radial"
+        android:gradientRadius="420dp"
+        android:centerX="0.5"
+        android:centerY="0.25"
+        android:startColor="@color/dhruva_surface"
+        android:centerColor="@color/dhruva_bg"
+        android:endColor="@color/dhruva_bg_deep" />
+</shape>

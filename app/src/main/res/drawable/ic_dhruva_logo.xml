@@ -1,0 +1,63 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- faint radar grid rings -->
+    <path
+        android:pathData="M 116,210 a140,140 0 1 0 280,0 a140,140 0 1 0 -280,0"
+        android:strokeColor="@color/dhruva_grid"
+        android:strokeWidth="1.4"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 171,210 a85,85 0 1 0 170,0 a85,85 0 1 0 -170,0"
+        android:strokeColor="@color/dhruva_grid"
+        android:strokeWidth="1.4"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 221,210 a35,35 0 1 0 70,0 a35,35 0 1 0 -70,0"
+        android:strokeColor="@color/dhruva_grid"
+        android:strokeWidth="1.4"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 256,50 L 256,370 M 96,210 L 416,210"
+        android:strokeColor="@color/dhruva_grid"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000" />
+
+    <!-- trajectory / road path, cyan -> purple -> amber -->
+    <path
+        android:pathData="M 115,335 C 138,315 150,250 170,250 C 190,250 190,285 210,285 C 230,285 240,110 256,85 C 272,110 282,285 302,285 C 322,285 322,250 342,250 C 362,250 374,315 397,335"
+        android:strokeWidth="14"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="115" android:startY="335"
+                android:endX="397" android:endY="85"
+                android:startColor="@color/dhruva_cyan"
+                android:centerColor="@color/dhruva_purple"
+                android:endColor="@color/dhruva_amber" />
+        </aapt:attr>
+    </path>
+
+    <!-- confidence ring + dead-reckoning dot -->
+    <path
+        android:pathData="M 211,210 a45,45 0 1 0 90,0 a45,45 0 1 0 -90,0"
+        android:strokeColor="@color/dhruva_amber"
+        android:strokeWidth="2.5"
+        android:fillColor="@color/dhruva_amber_glow" />
+    <path
+        android:pathData="M 245,210 a11,11 0 1 0 22,0 a11,11 0 1 0 -22,0"
+        android:fillColor="@color/dhruva_amber" />
+
+    <!-- zenith / Dhruva star -->
+    <path
+        android:pathData="M 256,42 L 261,62 L 281,67 L 261,72 L 256,92 L 251,72 L 231,67 L 251,62 Z"
+        android:fillColor="@color/dhruva_text" />
+
+</vector>

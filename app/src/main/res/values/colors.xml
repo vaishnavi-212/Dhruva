@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Existing (kept - referenced elsewhere, do not remove) -->
     <color name="dhruva_bg">#0B1420</color>
     <color name="dhruva_surface">#101D2E</color>
     <color name="dhruva_border">#223449</color>
@@ -8,4 +9,13 @@
     <color name="dhruva_red">#E8636C</color>
     <color name="dhruva_text">#E7EDF3</color>
     <color name="dhruva_text_dim">#93A4B8</color>
+
+    <!-- New: dashboard theme accents -->
+    <color name="dhruva_bg_deep">#050C1A</color>
+    <color name="dhruva_cyan">#00E5FF</color>
+    <color name="dhruva_purple">#7C4DFF</color>
+    <color name="dhruva_grid">#1E3A60</color>
+    <color name="dhruva_pill_bg">#15263C</color>
+    <color name="dhruva_border_glow">#4D4CD3C2</color>
+    <color name="dhruva_amber_glow">#33F3A94E</color>
 </resources>
