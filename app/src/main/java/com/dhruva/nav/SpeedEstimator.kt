@@ -76,9 +76,9 @@ class SpeedEstimator internal constructor(
     @Volatile var speedTimeS = Double.NaN
         private set
 
-    @Volatile var lastInferMs = 0.0
-        private set
-
+    @Volatile var lastInferMs = 0.0; private set
+    @Volatile var totalInferMs = 0.0; private set
+    @Volatile var maxInferMs = 0.0; private set
     @Volatile var inferences = 0L
         private set
 
@@ -165,6 +165,8 @@ class SpeedEstimator internal constructor(
                 val v = predict(input)
 
                 lastInferMs = (System.nanoTime() - t0) / 1e6
+                totalInferMs += lastInferMs
+                if (lastInferMs > maxInferMs) maxInferMs = lastInferMs
 
                 if (active) { // GPS may have come back while we ran
                     speedMps = v
