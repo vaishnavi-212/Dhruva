@@ -237,6 +237,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 return@setOnCheckedChangeListener
             }
             blackoutOn = isChecked
+            speedAi?.setActive(isChecked)
             tvMode.text = if (isChecked)
                 "Mode: DEAD RECKONING (simulated)\n" +
                     (if (speedAi != null) "AI speed · fallback %.0f km/h" else "holding %.0f km/h").format(lastGoodSpeedMps * 3.6)
@@ -530,8 +531,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             val gpsAgeS = if (lastFixMs > 0) (System.currentTimeMillis() - lastFixMs) / 1000 else 0
             val truthNote = if (gpsAgeS > 5) " · REAL GPS LOST ${gpsAgeS}s — score invalid" else ""
             val aiNote = speedAi?.let {
-                if (it.freshAt(event.timestamp / 1e9)) " · AI speed %.0f km/h (%.0f ms)".format(it.speedMps * 3.6, it.lastInferMs)
-                else " · AI speed warming up %.0f/30 s".format(it.bufferedS)
+                when {
+                    it.freshAt(event.timestamp / 1e9) ->
+                        " · AI speed %.0f km/h (%.1f ms)"
+                            .format(it.speedMps * 3.6, it.lastInferMs)
+
+                    it.ready ->
+                        " · AI speed ready (runs when GPS is lost)"
+
+                    else ->
+                        " · AI speed warming up %.0f/30 s"
+                            .format(it.bufferedS)
+                }
             } ?: " · AI speed OFF (model missing)"
             tvSensorStatus.text =
                 (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + truthNote
