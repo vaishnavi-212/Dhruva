@@ -9,6 +9,7 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.os.Bundle
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -145,6 +146,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var sessionStartMs = 0L
     private var gyroSampleCount = 0
 
+    // Seamless GNSS deficit handler: decides GNSS vs dead reckoning by itself (Part 5).
+    private lateinit var gnss: GnssSwitch
+    private var gnssWatcher: GnssWatcher? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // osmdroid refuses to fetch tiles without this — must be set before setContentView
         Configuration.getInstance().userAgentValue = packageName
@@ -194,6 +199,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         gravitySensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
         linAccSensor = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         speedAi = try { SpeedEstimator(this) } catch (e: Exception) { null }
+        gnss = GnssSwitch(onChange = { mode, why, tMs ->
+            onGnssModeChanged(mode, why, tMs) })
+        gnssWatcher = GnssWatcher(this, gnss)
 
         // routes.json ships in assets/: several stored routes, no synthetic padding.
         // A route for the wrong area is worse than none, which is why start() is checked.
@@ -572,6 +580,15 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         btnWhereTo.text = if (city != null) "Where to?" else btnWhereTo.text
     }
 
+
+    /** Called by GnssSwitch the moment the mode changes. Part 7 makes this
+     * drive the whole blackout. */
+    private fun onGnssModeChanged(mode: GnssMode, why: String, tMs: Long) {
+        android.util.Log.i("Dhruva", "GNSS mode -> $mode ($why) at $tMs ms")
+        Toast.makeText(this, if (mode == GnssMode.GNSS) "GPS back: $why" else
+            "GPS lost: $why", Toast.LENGTH_SHORT).show()
+    }
+
     /** Bind to a route from a GOOD fix, and say exactly what happened. */
     private fun bindRoad(loc: Location) {
         val rb = road ?: return
@@ -596,6 +613,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         // gravity at GAME too: the speed model needs all three streams well above 10 Hz
         gravitySensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         linAccSensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+        gnssWatcher?.start()
     }
 
     override fun onDestroy() {
@@ -608,6 +626,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         super.onPause()
         mapView.onPause()
         sm.unregisterListener(this)
+        gnssWatcher?.stop()
         speedAi?.pause()
         // MUST reset. Otherwise the next gyro event after a resume reports a dt
         // of however long the screen was off, and speed * dt teleports the dot
@@ -653,6 +672,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     lastTruthPoint = GeoPoint(loc.latitude, loc.longitude)
                     gpsPoints.add(loc.latitude to loc.longitude)
                 }
+                gnss.onFix(SystemClock.elapsedRealtime(), loc.accuracy)
 
                 if (lat0 == null) {
                     // first fix ever — this becomes the map's local origin
@@ -763,8 +783,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 if (it.freshAt(event.timestamp / 1e9)) " · AI speed %.0f km/h (%.0f ms)".format(it.speedMps * 3.6, it.lastInferMs)
                 else " · AI speed warming up %.0f/30 s".format(it.bufferedS)
             } ?: " · AI speed OFF (model missing)"
+            val gnssNote = " · " + (if (gnss.mode == GnssMode.GNSS) "GNSS"
+            else "DR: ${gnss.reason}") +
+                    (if (gnss.satellitesUsed >= 0) " (${gnss.satellitesUsed} sats)" else "")
             tvSensorStatus.text =
-                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + truthNote
+                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + gnssNote + truthNote
         }
 
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
