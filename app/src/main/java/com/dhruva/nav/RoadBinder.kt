@@ -132,6 +132,27 @@ class RoadBinder(routeJson: String) {
         }
     }
 
+    /** A point on the bound route, for the fusion filter. Heading: rad, 0 = east, counter-clockwise, direction of travel. */
+    data class RoadPoint(val lat: Double, val lon: Double, val headingRad: Double, val arcM: Double)
+
+    /**
+     * The nearest point on the bound route to (lat, lon), looking ONLY within [windowM] of [nearArcM].
+     * A route that passes close to itself must never snap to the wrong stretch: measured on the 11
+     * benchmark rides, looking anywhere on the route broke 3 rides (79-97% drift) and looking locally
+     * fixed all three (engine/scripts/eval_fusion_phone.py). Null if not bound or nothing in the window.
+     */
+    fun nearestNear(lat: Double, lon: Double, nearArcM: Double, windowM: Double = 40.0): RoadPoint? {
+        if (!bound) return null
+        var best: Cand? = null
+        for (c in candidates(lat, lon)) {
+            if (abs(c.s - nearArcM) > windowM) continue
+            if (best == null || c.d < best.d) best = c
+        }
+        val b = best ?: return null
+        val (la, lo) = at(b.s)
+        return RoadPoint(la, lo, atan2(b.ty * direction, b.tx * direction), b.s)
+    }
+
     /** Nearest point on each segment: distance off the road, arc-length, unit tangent. */
     private class Cand(val d: Double, val s: Double, val tx: Double, val ty: Double)
 

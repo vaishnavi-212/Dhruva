@@ -41,7 +41,8 @@ object TripSummary {
         val truthPath: List<Pair<Double, Double>>, // GPS during the
         // blackout, (lat, lon)
         val predictedPath: List<Pair<Double, Double>>, // Dhruva's dot
-        val reacquireJumpM: Double? = null
+        val reacquireJumpM: Double? = null,
+        val dotSource: String = "road_tracker" // what drew the dot: road_tracker or fusion (Part 7)
     )
 
     /** Where the file goes: the ride being recorded if there is one, else
@@ -168,6 +169,8 @@ object TripSummary {
                 } ?: "null"
             )
             .append(",\n")
+
+        sb.append(" \"dot_source\": ").append(str(t.dotSource)).append(",\n")
 
         sb.append(" \"destination\": null,\n")
         sb.append(" \"planned_route\": null,\n")

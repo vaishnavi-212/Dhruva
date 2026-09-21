@@ -153,6 +153,30 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var gnss: GnssSwitch
     private var gnssWatcher: GnssWatcher? = null
 
+    // GNSS+INS fusion filter, 10 times a second (Part 7).
+    private val fusion = FusionEngine()
+    private val seamless = SeamlessDot()
+    private val fusionHandler = android.os.Handler(Looper.getMainLooper())
+    private var fusionReady = false
+    private var lastFusionMs = 0L
+    private var yawSum = 0.0 // gyro turn accumulated since the last fusion step, rad
+    private var yawTime = 0.0 // and over how long, s
+    private var pendingFix: DoubleArray? = null // x, y, sigma, speed of a fix not yet given to the filter
+    private var roadArcNear = Double.NaN // where on the route the filter last was, m
+    private var dotFromFusion = false // long-press the mode text to switch
+    private var fusionEpochs = 0L
+    private var fusionRateStartMs = 0L
+    private var fusionHz = 0.0
+    private var blackoutDistM = 0.0
+    private var reacquireJumpM: Double? = null
+
+    private val fusionTick = object : Runnable {
+        override fun run() {
+            fusionStep()
+            fusionHandler.postDelayed(this, 100)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // osmdroid refuses to fetch tiles without this — must be set before setContentView
         Configuration.getInstance().userAgentValue = packageName
@@ -206,6 +230,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             onGnssModeChanged(mode, why, tMs) })
         gnssWatcher = GnssWatcher(this, gnss)
         perf = PerfLog(this, { speedAi }, { blackoutOn }).also { it.start() }
+        tvMode.setOnLongClickListener {
+            dotFromFusion = !dotFromFusion
+            Toast.makeText(this, if (dotFromFusion) "Dot: fusion filter (10 Hz)" else "Dot: road tracker",
+                Toast.LENGTH_SHORT).show()
+            true
+        }
 
         tvSensorStatus.setOnLongClickListener {
             benchmark = !benchmark
@@ -312,52 +342,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     Toast.LENGTH_LONG).show()
                 return@setOnCheckedChangeListener
             }
-            blackoutOn = isChecked
-            speedAi?.setActive(isChecked || benchmark) // the model runs only during a blackout (or a benchmark)
-            tvMode.text = if (isChecked)
-                "Mode: DEAD RECKONING (simulated)\n" +
-                    (if (speedAi != null) "AI speed · fallback %.0f km/h" else "holding %.0f km/h").format(lastGoodSpeedMps * 3.6)
-            else "Mode: GNSS"
-            paths.setBlackout(isChecked)
-
-            // "0 m apart" while GNSS is healthy is not a result -- there is no
-            // prediction to compare against yet, and it reads like a perfect
-            // score to anyone watching. Say what is actually happening.
-            if (!isChecked) {
-                tvErrorLabel.text = "GNSS locked — tracking"
-                blackoutEndMs = System.currentTimeMillis()
-                blackoutToIndex = gpsPoints.size
-                gyroBias.unfreeze()          // GNSS is back: keep learning the bias
-                routeGuard = null; rebinder = null   // GPS checks the route again (off-route detector)
-            }
-
-            if (isChecked) {
-                // The last fix may have said "stationary". If that flag stayed true
-                // through the outage, the bias estimator would average a MOVING gyro.
-                stationaryNow = false
-                gyroBias.freeze()
-                aiSteps = 0; heldSteps = 0
-                voice?.reset()
-                voice?.say("Satellite signal lost. Switching to inertial navigation.")
-
-                // Each blackout is scored on its own: denied distance from HERE,
-                // denied time from NOW, and a prediction list that starts empty.
-                // On 10 Sept a third blackout inherited the first two's points.
-                blackoutFromIndex = gpsPoints.size
-                blackoutToIndex = -1
-                blackoutStartMs = System.currentTimeMillis()
-                blackoutEndMs = 0L
-                predPoints.clear()
-
-                // Anchor to where we are, facing the way we are facing.
-                lastAcceptedGps?.let { loc ->
-                    if (loc.hasBearing()) deadReckoner?.setHeadingFromBearing(loc.bearing)
-                    paths.startPredicted(loc.latitude, loc.longitude)   // a NEW line
-                    predPoints.add(loc.latitude to loc.longitude)
-                    if (roadBindingOn) bindRoad(loc)
-                    armRouteGuard()
-                }
-            }
+            // The switch no longer runs the blackout itself. It tells the GNSS switch "simulated", and the
+            // GNSS switch calls enterBlackout()/exitBlackout() -- exactly what a real tunnel does.
+            gnss.setSimulated(isChecked, SystemClock.elapsedRealtime())
         }
 
         switchRoadBinding.setOnCheckedChangeListener { _, isChecked ->
@@ -606,10 +593,126 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
     /** Called by GnssSwitch the moment the mode changes. Part 7 makes this
      * drive the whole blackout. */
+    /** Called by GnssSwitch the moment the mode changes. */
     private fun onGnssModeChanged(mode: GnssMode, why: String, tMs: Long) {
         android.util.Log.i("Dhruva", "GNSS mode -> $mode ($why) at $tMs ms")
-        Toast.makeText(this, if (mode == GnssMode.GNSS) "GPS back: $why" else
-            "GPS lost: $why", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, if (mode == GnssMode.GNSS) "GPS back: $why" else "GPS lost: $why", Toast.LENGTH_SHORT).show()
+        if (mode == GnssMode.DEAD_RECKONING) enterBlackout(why) else exitBlackout()
+    }
+
+    /** GPS lost (real or simulated): start dead reckoning from the last good fix. */
+    private fun enterBlackout(why: String) {
+        if (blackoutOn) return
+        blackoutOn = true
+        speedAi?.setActive(true)
+        tvMode.text = "Mode: DEAD RECKONING (" + (if (gnss.simulated) "simulated" else why) + ")\n" +
+                (if (speedAi != null) "AI speed · fallback %.0f km/h" else "holding %.0f km/h").format(lastGoodSpeedMps * 3.6)
+        paths.setBlackout(true)
+        // The last fix may have said "stationary". If that flag stayed true
+        // through the outage, the bias estimator would average a MOVING gyro.
+        stationaryNow = false
+        gyroBias.freeze()
+        aiSteps = 0; heldSteps = 0
+        blackoutDistM = 0.0
+        reacquireJumpM = null
+        voice?.reset()
+        voice?.say("Satellite signal lost. Switching to inertial navigation.")
+        // Each blackout is scored on its own: denied distance from HERE,
+        // denied time from NOW, and a prediction list that starts empty.
+        // On 10 Sept a third blackout inherited the first two's points.
+        blackoutFromIndex = gpsPoints.size
+        blackoutToIndex = -1
+        blackoutStartMs = System.currentTimeMillis()
+        blackoutEndMs = 0L
+        predPoints.clear()
+        // Anchor to where we are, facing the way we are facing.
+        lastAcceptedGps?.let { loc ->
+            if (loc.hasBearing()) deadReckoner?.setHeadingFromBearing(loc.bearing)
+            paths.startPredicted(loc.latitude, loc.longitude) // a NEW line
+            predPoints.add(loc.latitude to loc.longitude)
+            if (roadBindingOn) {
+                bindRoad(loc)
+                roadArcNear = road?.arcM ?: Double.NaN
+            }
+        }
+    }
+
+    /** GPS usable again: stop dead reckoning and record how far off the dot was. */
+    private fun exitBlackout() {
+        if (!blackoutOn) return
+        blackoutOn = false
+        speedAi?.setActive(benchmark)
+        tvMode.text = "Mode: GNSS"
+        paths.setBlackout(false)
+        // "0 m apart" while GNSS is healthy is not a result -- there is no
+        // prediction to compare against yet, and it reads like a perfect
+        // score to anyone watching. Say what is actually happening.
+        tvErrorLabel.text = "GNSS locked — tracking"
+        blackoutEndMs = System.currentTimeMillis()
+        blackoutToIndex = gpsPoints.size
+        gyroBias.unfreeze() // GNSS is back: keep learning the bias
+        // The dot's error at the moment GPS returns: a real-world accuracy number, even in a real tunnel.
+        val p = predPoints.lastOrNull(); val t = lastTruthPoint
+        if (p != null && t != null) {
+            val d = FloatArray(1)
+            android.location.Location.distanceBetween(p.first, p.second, t.latitude, t.longitude, d)
+            reacquireJumpM = d[0].toDouble()
+            android.util.Log.i("Dhruva", "GPS back: dot was %.1f m off".format(reacquireJumpM))
+        }
+        voice?.say("Satellite signal back.")
+    }
+
+    /** One step of the GNSS+INS fusion filter. Runs 10 times a second from fusionTick. */
+    private fun fusionStep() {
+        val now = SystemClock.elapsedRealtime()
+        val dt = if (lastFusionMs == 0L) 0.1 else ((now - lastFusionMs) / 1000.0).coerceIn(0.05, 0.5)
+        lastFusionMs = now
+        val o0 = lat0; val o1 = lon0
+        if (!fusionReady || o0 == null || o1 == null) return
+
+        val wz = if (yawTime > 0.0) yawSum / yawTime else 0.0 // average turn rate since the last step
+        yawSum = 0.0; yawTime = 0.0
+
+        val fix = pendingFix; pendingFix = null
+
+        // Speed measurement: the AI model during a blackout; held GPS speed if the model has no answer yet.
+        val ai = speedAi
+        val aiFresh = ai != null && ai.freshAt(SystemClock.elapsedRealtimeNanos() / 1e9)
+        val modelSpeed = if (!blackoutOn) null else if (aiFresh) ai!!.speedMps else lastGoodSpeedMps
+
+        // Road: nearest point within 40 m of where we last were on the route.
+        var roadPt: RoadBinder.RoadPoint? = null
+        val rb = road
+        if (roadBindingOn && rb != null && rb.bound) {
+            val (la, lo) = toLatLon(fusion.posX, fusion.posY, o0, o1)
+            roadPt = rb.nearestNear(la, lo, if (roadArcNear.isNaN()) rb.arcM else roadArcNear)
+            roadPt?.let { roadArcNear = it.arcM }
+        }
+        val roadXY = roadPt?.let { toXY(it.lat, it.lon, o0, o1) }
+
+        fusion.step(dt, wz, 0.0,
+            gnssX = fix?.get(0), gnssY = fix?.get(1), gnssSigma = fix?.get(2),
+            gnssSpeed = fix?.get(3)?.takeIf { !it.isNaN() },
+            modelSpeed = modelSpeed,
+            roadHeading = roadPt?.headingRad, roadX = roadXY?.first, roadY = roadXY?.second)
+
+        seamless.update(fusion.posX, fusion.posY, dt)
+        if (blackoutOn) blackoutDistM += fusion.speed * dt
+        fusionEpochs++
+        if (fusionRateStartMs == 0L) fusionRateStartMs = now
+        if (fusionEpochs % 50 == 0L && now > fusionRateStartMs) fusionHz = fusionEpochs * 1000.0 / (now - fusionRateStartMs)
+
+        if (!dotFromFusion) return // the road tracker draws the dot (default)
+
+        val (la, lo) = toLatLon(seamless.outX, seamless.outY, o0, o1)
+        // The honest 90% circle from distance without GPS (as DeadReckoner), not the filter's own covariance.
+        val radius = if (blackoutOn) 2.146 * maxOf(0.19 * blackoutDistM, 2.0) else 0.0
+        placeDot(la, lo, isBlue = !blackoutOn, radiusM = radius)
+        if (blackoutOn) {
+            paths.addPredicted(la, lo)
+            predPoints.add(la to lo)
+            tvErrorLabel.text = "%.0f m apart · fusion".format(paths.currentErrorMetres())
+        }
     }
 
     /** Writes trip_summary.json next to the ride's sensor files (or
@@ -650,7 +753,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     blackoutFromIndex.coerceIn(0, truthEnd),
                     truthEnd
                 ).toList(),
-                predictedPath = predPoints.toList()
+                predictedPath = predPoints.toList(),
+                reacquireJumpM = reacquireJumpM,
+                dotSource = if (dotFromFusion) "fusion" else "road_tracker"
             )
 
             val f = TripSummary.save(
@@ -707,6 +812,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         gravitySensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         linAccSensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         gnssWatcher?.start()
+        fusionHandler.removeCallbacks(fusionTick)
+        fusionHandler.post(fusionTick)
     }
 
     override fun onDestroy() {
@@ -721,6 +828,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         mapView.onPause()
         sm.unregisterListener(this)
         gnssWatcher?.stop()
+        fusionHandler.removeCallbacks(fusionTick)
+        lastFusionMs = 0L
         speedAi?.pause()
         // MUST reset. Otherwise the next gyro event after a resume reports a dt
         // of however long the screen was off, and speed * dt teleports the dot
@@ -775,6 +884,15 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     mapView.controller.setCenter(GeoPoint(loc.latitude, loc.longitude))
                 }
                 val (x, y) = toXY(loc.latitude, loc.longitude, lat0!!, lon0!!)
+                // Fusion (Part 7): start at the first fix, then hand it every fix while GNSS is usable.
+                if (!fusionReady) {
+                    fusion.initialise(x, y, if (loc.hasSpeed()) loc.speed.toDouble() else 0.0,
+                        if (loc.hasBearing()) Math.toRadians(90.0 - loc.bearing) else 0.0)
+                    fusionReady = true
+                } else if (gnss.mode == GnssMode.GNSS) {
+                    pendingFix = doubleArrayOf(x, y, loc.accuracy.toDouble().coerceAtLeast(3.0),
+                        if (loc.hasSpeed()) loc.speed.toDouble() else Double.NaN)
+                }
 
                 // Freeze the speed the moment the blackout starts -- during one we
                 // are pretending these fixes do not exist.
@@ -828,7 +946,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 // That is what makes it a blackout.
 
                 // only let a real fix move the dot when we are NOT simulating a blackout
-                if (!blackoutOn && isRealMovement) {
+                if (!blackoutOn && isRealMovement && !dotFromFusion) {
                     placeDot(loc.latitude, loc.longitude, isBlue = true, radiusM = 0.0)
                     recentFixes.addLast(loc)
                     while (recentFixes.size > 10) recentFixes.removeFirst()
@@ -890,11 +1008,12 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             val gnssNote = " · " + (if (gnss.mode == GnssMode.GNSS) "GNSS"
             else "DR: ${gnss.reason}") +
                     (if (gnss.satellitesUsed >= 0) " (${gnss.satellitesUsed} sats)" else "")
+            val fusionNote = " · fusion %.1f Hz%s".format(fusionHz, if (dotFromFusion) " (drawing)" else "")
             tvSensorStatus.text =
-                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + gnssNote + truthNote
+                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + gnssNote + fusionNote + truthNote
+
         }
 
-        if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
 
         // Rotation about the TRUE vertical, not the phone's z axis. Reduces to
         // gyro z when the phone happens to be flat, and stays correct when it is
@@ -907,6 +1026,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         val yawRate = (gx * gravityUnit[0] +
                 gy * gravityUnit[1] +
                 gz * gravityUnit[2]).toDouble()
+        // Fusion (Part 7) needs the turn rate all the time, not only in a blackout.
+        yawSum += yawRate * dt; yawTime += dt
+        if (!blackoutOn) return // only drive the dot with dead reckoning during a blackout
 
         // Speed: the trained model when it has a fresh answer, else the GPS speed held at the cut.
         val nowS = event.timestamp / 1e9
@@ -926,6 +1048,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         } else {
             lat = free.first; lon = free.second
         }
+
 
         placeDot(lat, lon, isBlue = false, radiusM = radius)
 
