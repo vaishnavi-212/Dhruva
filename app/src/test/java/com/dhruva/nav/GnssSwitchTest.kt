@@ -71,6 +71,19 @@ class GnssSwitchTest {
     }
 
     @Test
+    fun aPhoneThatNeverReportsSatellitesStaysOnGnss() {
+        // 21 Sept: the emulator (and some phones) report 0 used satellites while fixes are fine.
+        val sw = GnssSwitch(onChange = { m, w, t -> changes.add(m to t) })
+        for (s in 10..20) {
+            sw.onFix(s * 1000L, 5f)
+            sw.onSatellites(s * 1000L, 0)
+            sw.tick(s * 1000L + 500L)
+        }
+        assertEquals(GnssMode.GNSS, sw.mode)
+        assertEquals(0, changes.size)
+    }
+
+    @Test
     fun tooFewSatellitesForASecondMeansLost() {
         goodFixes(0, 10)
         goodFixes(10, 15, sats = 3)
