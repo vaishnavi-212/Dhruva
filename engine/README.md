@@ -44,7 +44,13 @@ Run every command from inside `engine/`.
 | `checkpoints/app/` | the model shipped in the app (`speed_app_replica.*`: 11 benchmark rides, phone features) and its ONNX export |
 | `rides/` | 15 two-wheeler recordings on KLE Tech campus roads, Hubballi: 11 benchmark rides (30–31 Aug) and 4 on 11 Sept. Files: `Accelerometer` (linear, m/s²), `Gyroscope` (rad/s), `Gravity` (m/s²), `Location` (GPS, 1 Hz) |
 | `data/osm/`, `data/landmarks/` | OpenStreetMap road geometry for the area; 14 speed breakers surveyed on foot |
+| `dhruva/citypack.py` | the offline city: OSM places + road network, routing and search (the app's `CityPack.kt` is a port of it) |
 | `results/` | self-healing map and no-map analysis with charts; phone-feature, route-guard and re-route results; IO-VNBD position plot (`results/iovnbd/`) |
+
+The app's destination flow (search a place, route to it, guide with GPS off, catch a wrong turn) is built from
+`scripts/build_city_pack.py` -> `app/src/main/assets/city_pack_hubli.json`, and is checked against this engine by
+`make_golden_city.py` (routes and searches) and `make_golden_route_guard.py` (the wrong-turn alarm).
+See `docs/FIELD_TEST.md` for how to test it on a phone.
 
 IO-VNBD is not included: `python scripts/fetch_iovnbd.py --list` (dataset: github.com/onyekpeu/IO-VNBD).
 To redo the position plot: `python scripts/fetch_iovnbd.py S-S2 S-S3a S-Vta1a S-Vw2 S-Y1`, then `python scripts/eval_iovnbd.py --check` (reproduces the model's 110 m held-out error), `python scripts/eval_iovnbd.py`, `python scripts/plot_iovnbd.py`. The OpenStreetMap corridors are already in `data/osm/iovnbd_*.json`.
