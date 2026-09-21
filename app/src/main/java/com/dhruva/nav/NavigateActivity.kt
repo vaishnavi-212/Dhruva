@@ -76,6 +76,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var speedAi: SpeedEstimator? = null
     private var aiSteps = 0L
     private var heldSteps = 0L
+    private var perf: PerfLog? = null
+// Benchmark mode: run the model while standing still, for the battery test (long-press the status line).
+    private var benchmark = false
 
     // Unit gravity vector in DEVICE coordinates. Needed to work out which way is
     // actually "up" -- raw gyro z is only the vertical axis when the phone lies
@@ -202,6 +205,21 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         gnss = GnssSwitch(onChange = { mode, why, tMs ->
             onGnssModeChanged(mode, why, tMs) })
         gnssWatcher = GnssWatcher(this, gnss)
+        perf = PerfLog(this, { speedAi }, { blackoutOn }).also { it.start() }
+
+        tvSensorStatus.setOnLongClickListener {
+            benchmark = !benchmark
+            speedAi?.setActive(benchmark || blackoutOn)
+
+            Toast.makeText(
+                this,
+                if (benchmark) "Benchmark ON: model runs twice a second"
+                else "Benchmark OFF",
+                Toast.LENGTH_SHORT
+            ).show()
+
+            true
+        }
 
         // routes.json ships in assets/: several stored routes, no synthetic padding.
         // A route for the wrong area is worse than none, which is why start() is checked.
@@ -295,6 +313,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 return@setOnCheckedChangeListener
             }
             blackoutOn = isChecked
+            speedAi?.setActive(isChecked || benchmark) // the model runs only during a blackout (or a benchmark)
             tvMode.text = if (isChecked)
                 "Mode: DEAD RECKONING (simulated)\n" +
                     (if (speedAi != null) "AI speed · fallback %.0f km/h" else "holding %.0f km/h").format(lastGoodSpeedMps * 3.6)
@@ -404,11 +423,15 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 (if (aiSteps + heldSteps > 0) "%.0f%% AI model".format(100.0 * aiSteps / (aiSteps + heldSteps)) else "n/a")
             summaryCard.visibility = View.VISIBLE
             btnFinishRun.visibility = View.GONE
+            saveTrip(r, now, truthEnd, blackoutDurationS)
+
         }
 
         btnCloseSummary.setOnClickListener {
-            summaryCard.visibility = View.GONE
-            btnFinishRun.visibility = View.VISIBLE
+            summaryCard.visibility = View.VISIBLE
+            btnFinishRun.visibility = View.GONE
+
+
         }
 
         startGpsUpdates()
@@ -589,6 +612,76 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             "GPS lost: $why", Toast.LENGTH_SHORT).show()
     }
 
+    /** Writes trip_summary.json next to the ride's sensor files (or
+     * files/trips/ if not recording). */
+    private fun saveTrip(
+        r: RunSummary.Result,
+        nowMs: Long,
+        truthEnd: Int,
+        blackoutDurationS: Double
+    ) {
+        try {
+            val ai = speedAi
+
+            val trip = TripSummary.Trip(
+                createdMs = nowMs,
+                appVersion = packageManager.getPackageInfo(
+                    packageName,
+                    0
+                ).versionName ?: "?",
+                phone = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                android = android.os.Build.VERSION.RELEASE,
+                blackoutStartMs = blackoutStartMs,
+                blackoutEndMs = if (blackoutEndMs > 0L) blackoutEndMs else null,
+                blackoutDurationS = blackoutDurationS,
+                result = r,
+                verdict = RunSummary.verdict(r),
+                aiShare = if (aiSteps + heldSteps > 0)
+                    aiSteps.toDouble() / (aiSteps + heldSteps)
+                else null,
+                modelRuns = ai?.inferences ?: 0L,
+                inferMsMean = if (ai != null && ai.inferences > 0)
+                    ai.totalInferMs / ai.inferences
+                else 0.0,
+                inferMsMax = ai?.maxInferMs ?: 0.0,
+                roadBinding = roadBindingOn,
+                routeName = if (roadBindingOn) road?.routeName else null,
+                truthPath = gpsPoints.subList(
+                    blackoutFromIndex.coerceIn(0, truthEnd),
+                    truthEnd
+                ).toList(),
+                predictedPath = predPoints.toList()
+            )
+
+            val f = TripSummary.save(
+                trip,
+                TripSummary.folderFor(this)
+            )
+
+            android.util.Log.i(
+                "Dhruva",
+                "trip summary -> ${f.absolutePath}"
+            )
+
+            Toast.makeText(
+                this,
+                "Saved ${f.name}",
+                Toast.LENGTH_SHORT
+            ).show()
+        } catch (e: Exception) {
+            android.util.Log.e(
+                "Dhruva",
+                "trip summary failed",
+                e
+            )
+
+            Toast.makeText(
+                this,
+                "Could not save the trip summary: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
     /** Bind to a route from a GOOD fix, and say exactly what happened. */
     private fun bindRoad(loc: Location) {
         val rb = road ?: return
@@ -619,6 +712,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     override fun onDestroy() {
         super.onDestroy()
         voice?.shutdown()
+        perf?.stop()
         speedAi?.close()
     }
 
@@ -780,8 +874,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             val gpsAgeS = if (lastFixMs > 0) (System.currentTimeMillis() - lastFixMs) / 1000 else 0
             val truthNote = if (gpsAgeS > 5) " · REAL GPS LOST ${gpsAgeS}s — score invalid" else ""
             val aiNote = speedAi?.let {
-                if (it.freshAt(event.timestamp / 1e9)) " · AI speed %.0f km/h (%.0f ms)".format(it.speedMps * 3.6, it.lastInferMs)
-                else " · AI speed warming up %.0f/30 s".format(it.bufferedS)
+                when {
+                    it.freshAt(event.timestamp / 1e9) ->
+                        " · AI speed %.0f km/h (%.1f ms)"
+                            .format(it.speedMps * 3.6, it.lastInferMs)
+
+                    it.ready ->
+                        " · AI speed ready (runs when GPS is lost)"
+
+                    else ->
+                        " · AI speed warming up %.0f/30 s"
+                            .format(it.bufferedS)
+                }
             } ?: " · AI speed OFF (model missing)"
             val gnssNote = " · " + (if (gnss.mode == GnssMode.GNSS) "GNSS"
             else "DR: ${gnss.reason}") +
