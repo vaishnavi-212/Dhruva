@@ -44,6 +44,25 @@ class TripSummaryTest {
     )
 
     @Test
+    fun destinationAndWrongTurnsAreRecorded() {
+        val j = TripSummary.toJson(sample().copy(
+            destination = TripSummary.Dest("Unakal Kere", 15.3782, 75.1048, arrived = true, remainingM = 0.0),
+            plannedRoute = TripSummary.PlannedRouteInfo(1483.0, 174.0, listOf(15.3693 to 75.1219, 15.3700 to 75.1210)),
+            wrongTurns = listOf(TripSummary.WrongTurn(212.0, 92.0, 92.5, 5, 1460.0, uTurn = false))
+        ))
+        for (key in listOf(
+            "\"destination\": {\"name\": \"Unakal Kere\"",
+            "\"arrived\": true",
+            "\"planned_route\": {\"length_m\": 1483.000",
+            "\"at_m\": 212.000",
+            "\"candidate_roads\": 5",
+            "\"u_turn\": false"
+        )) {
+            assertTrue("missing $key in\n$j", j.contains(key))
+        }
+    }
+
+    @Test
     fun containsTheFieldsTheLaptopReads() {
         val j = TripSummary.toJson(sample())
 

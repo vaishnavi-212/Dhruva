@@ -42,8 +42,21 @@ object TripSummary {
         // blackout, (lat, lon)
         val predictedPath: List<Pair<Double, Double>>, // Dhruva's dot
         val reacquireJumpM: Double? = null,
-        val dotSource: String = "road_tracker" // what drew the dot: road_tracker or fusion (Part 7)
+        val dotSource: String = "road_tracker", // what drew the dot: road_tracker or fusion (Part 7)
+        val destination: Dest? = null,          // where the rider asked to go (the destination flow)
+        val plannedRoute: PlannedRouteInfo? = null,
+        val wrongTurns: List<WrongTurn> = emptyList()
     )
+
+    /** The searched destination and whether the app believes it got there. */
+    data class Dest(val name: String, val lat: Double, val lon: Double, val arrived: Boolean, val remainingM: Double?)
+
+    /** The route as planned when GPS was last healthy (re-routes replace it). */
+    data class PlannedRouteInfo(val lengthM: Double, val seconds: Double, val points: List<Pair<Double, Double>>)
+
+    /** A wrong turn caught with GPS off, and what the app did about it. */
+    data class WrongTurn(val atM: Double, val gyroDeg: Double, val roadDeg: Double, val candidates: Int,
+                         val newRouteM: Double?, val uTurn: Boolean)
 
     /** Where the file goes: the ride being recorded if there is one, else
      * files/trips/. */
@@ -172,9 +185,26 @@ object TripSummary {
 
         sb.append(" \"dot_source\": ").append(str(t.dotSource)).append(",\n")
 
-        sb.append(" \"destination\": null,\n")
-        sb.append(" \"planned_route\": null,\n")
-        sb.append(" \"wrong_turn_alarms\": [],\n")
+        sb.append(" \"destination\": ")
+            .append(t.destination?.let { d ->
+                "{\"name\": ${str(d.name)}, \"lat\": ${num(d.lat)}, \"lon\": ${num(d.lon)}, " +
+                    "\"arrived\": ${d.arrived}, \"remaining_m\": ${d.remainingM?.let { num(it) } ?: "null"}}"
+            } ?: "null")
+            .append(",\n")
+
+        sb.append(" \"planned_route\": ")
+            .append(t.plannedRoute?.let { r ->
+                "{\"length_m\": ${num(r.lengthM)}, \"seconds\": ${num(r.seconds)}, \"points\": ${path(r.points)}}"
+            } ?: "null")
+            .append(",\n")
+
+        sb.append(" \"wrong_turn_alarms\": [")
+            .append(t.wrongTurns.joinToString(", ") { w ->
+                "{\"at_m\": ${num(w.atM)}, \"gyro_deg\": ${num(w.gyroDeg)}, \"road_deg\": ${num(w.roadDeg)}, " +
+                    "\"candidate_roads\": ${w.candidates}, \"new_route_m\": ${w.newRouteM?.let { num(it) } ?: "null"}, " +
+                    "\"u_turn\": ${w.uTurn}}"
+            })
+            .append("],\n")
 
         sb.append(" \"truth_path\": ")
             .append(path(t.truthPath))

@@ -131,6 +131,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private var guardLastFeed = 0.0
     private var guardAlarmT = 0.0
     private var psiSinceCut = 0.0
+    private val wrongTurns = mutableListOf<TripSummary.WrongTurn>()
 
     private var lat0: Double? = null
     private var lon0: Double? = null
@@ -489,6 +490,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         if (ax.size < 2) return
         routeGuard = RouteGuard(ax, ay)
         psiSinceCut = 0.0; guardT0 = Double.NaN; guardLastFeed = 0.0
+        android.util.Log.i("DhruvaNav", "route guard armed at %.0f m along the route, %.0f m of route ahead"
+            .format(guardCutArc, (guide?.lengthM ?: 0.0) - guardCutArc))
     }
 
     private fun watchForWrongTurn(nowS: Double, rb: RoadBinder) {
@@ -500,6 +503,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         val since = rb.arcM - guardCutArc
         if (guard.add(t, since, psiSinceCut)) {
             voice?.say("Wrong turn.")
+            wrongTurns.add(TripSummary.WrongTurn(since, 0.0, 0.0, 0, null, false))   // filled in when the road is chosen
             android.util.Log.i("DhruvaNav", "wrong turn: %.0f m after the cut".format(since))
             tvErrorLabel.text = "Wrong turn — finding the road you took…"
             val c = city; val g = guide; val nodes = routeNodes
@@ -543,6 +547,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 armRouteGuard()                            // a second wrong turn is caught too
                 voice?.say(if (d.uTurn) "Re-routing. Make a U-turn." else "Re-routing.")
                 tvErrorLabel.text = "Re-routed from the road you took (gyro %+.0f°)%s".format(choice.gyroDeg, if (d.uTurn) " · make a U-turn" else "")
+                if (wrongTurns.isNotEmpty()) {
+                    val w = wrongTurns.removeAt(wrongTurns.size - 1)
+                    wrongTurns.add(TripSummary.WrongTurn(w.atM, choice.gyroDeg, choice.pathDeg, choice.candidates,
+                        d.route.lengthM, d.uTurn))
+                }
                 android.util.Log.i("DhruvaNav", "wrong-turn re-route: %.0f m, u-turn=%s, %d candidate road(s), gyro %.0f vs road %.0f"
                     .format(d.route.lengthM, d.uTurn, choice.candidates, choice.gyroDeg, choice.pathDeg))
             }
@@ -634,6 +643,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 bindRoad(loc)
                 roadArcNear = road?.arcM ?: Double.NaN
             }
+            // Watch the planned route from here: with GPS off only the gyro can tell us
+            // the rider has taken a different road.
+            armRouteGuard()
         }
     }
 
@@ -651,6 +663,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         blackoutEndMs = System.currentTimeMillis()
         blackoutToIndex = gpsPoints.size
         gyroBias.unfreeze() // GNSS is back: keep learning the bias
+        routeGuard = null; rebinder = null // GPS itself checks the route again (the off-route detector)
         // The dot's error at the moment GPS returns: a real-world accuracy number, even in a real tunnel.
         val p = predPoints.lastOrNull(); val t = lastTruthPoint
         if (p != null && t != null) {
@@ -755,7 +768,15 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 ).toList(),
                 predictedPath = predPoints.toList(),
                 reacquireJumpM = reacquireJumpM,
-                dotSource = if (dotFromFusion) "fusion" else "road_tracker"
+                dotSource = if (dotFromFusion) "fusion" else "road_tracker",
+                destination = planned?.let { p ->
+                    TripSummary.Dest(p.place.name, p.place.lat, p.place.lon, navigator?.arrived == true,
+                        guide?.let { (it.lengthM - progressS).coerceAtLeast(0.0) })
+                },
+                plannedRoute = planned?.let { p ->
+                    TripSummary.PlannedRouteInfo(p.route.lengthM, p.route.seconds, p.route.points)
+                },
+                wrongTurns = wrongTurns.toList()
             )
 
             val f = TripSummary.save(

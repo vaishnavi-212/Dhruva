@@ -57,6 +57,17 @@ class GnssSwitch(
     var satellitesUsed = -1
         private set
 
+    /**
+     * True once this phone has reported a healthy satellite count at least once.
+     *
+     * 21 Sept: some phones (and the emulator) report 0 satellites used while the fused provider
+     * still delivers good fixes. Believing that puts the app in dead reckoning before the ride even
+     * starts. Until a real count is seen, the satellite rule is ignored and only the fix timeout and
+     * accuracy decide.
+     */
+    var satellitesTrusted = false
+        private set
+
     var switches = 0
         private set
 
@@ -80,6 +91,7 @@ class GnssSwitch(
 
         val enoughSats =
             satellitesUsed < 0 ||
+                    !satellitesTrusted ||
                     satellitesUsed >= minSatellites
 
         val good =
@@ -122,8 +134,9 @@ class GnssSwitch(
         used: Int
     ) {
         satellitesUsed = used
+        if (used >= minSatellites) satellitesTrusted = true
 
-        if (used < minSatellites) {
+        if (used < minSatellites && satellitesTrusted) {
             if (weakSinceMs < 0) {
                 weakSinceMs = tMs
             }
