@@ -9,6 +9,7 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.os.Bundle
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -28,6 +29,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
+import org.osmdroid.views.overlay.Polyline
 
 class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
@@ -106,6 +108,30 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var btnRoute: Button
     private lateinit var btnSaveRoute: Button
 
+    // Destination: search a place, route to it offline, bind the dot to that route.
+    private lateinit var btnWhereTo: Button
+    private var city: CityPack? = null
+    private var planned: PlannedRoute? = null
+    private var routeLine: Polyline? = null
+    // Turn-by-turn on the planned route: progress from GPS, or from the dot during a blackout.
+    private var guide: RouteGuide? = null
+    private var navigator: Navigator? = null
+    private val offRoute = OffRouteDetector()
+    private var progressS = 0.0
+    private var lastRerouteMs = 0L
+    private var lastGuideMs = 0L
+    private val recentFixes = ArrayDeque<Location>()      // for the rider's direction at a re-route
+    private val fixFilter = FixFilter()                   // drops cached and impossible fixes before anything uses them
+    // Wrong turn with GPS off: the gyro watches the planned route ahead of the dot.
+    private var routeNodes: IntArray? = null
+    private var routeGuard: RouteGuard? = null
+    private var rebinder: Rebinder? = null
+    private var guardCutArc = 0.0
+    private var guardT0 = 0.0
+    private var guardLastFeed = 0.0
+    private var guardAlarmT = 0.0
+    private var psiSinceCut = 0.0
+
     private var lat0: Double? = null
     private var lon0: Double? = null
     private var deadReckoner: DeadReckoner? = null
@@ -122,6 +148,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private val predPoints = mutableListOf<Pair<Double, Double>>()
     private var sessionStartMs = 0L
     private var gyroSampleCount = 0
+
+    // Seamless GNSS deficit handler: decides GNSS vs dead reckoning by itself (Part 5).
+    private lateinit var gnss: GnssSwitch
+    private var gnssWatcher: GnssWatcher? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // osmdroid refuses to fetch tiles without this — must be set before setContentView
@@ -151,6 +181,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         btnCloseSummary = findViewById(R.id.btnCloseSummary)
         btnRoute = findViewById(R.id.btnRoute)
         btnSaveRoute = findViewById(R.id.btnSaveRoute)
+        btnWhereTo = findViewById(R.id.btnWhereTo)
 
         mapView.setTileSource(TileSourceFactory.MAPNIK)
         mapView.setMultiTouchControls(true)
@@ -171,6 +202,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         gravitySensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
         linAccSensor = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         speedAi = try { SpeedEstimator(this) } catch (e: Exception) { null }
+        gnss = GnssSwitch(onChange = { mode, why, tMs ->
+            onGnssModeChanged(mode, why, tMs) })
+        gnssWatcher = GnssWatcher(this, gnss)
         perf = PerfLog(this, { speedAi }, { blackoutOn }).also { it.start() }
 
         tvSensorStatus.setOnLongClickListener {
@@ -205,6 +239,29 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
             if (roadBindingOn) lastAcceptedGps?.let { bindRoad(it) }
         }
 
+        // The city pack is 1.15 MB of roads and places: read it off the main thread.
+        Thread {
+            val c = try { CityPack.fromAssets(this) } catch (e: Exception) { null }
+            runOnUiThread {
+                city = c
+                btnWhereTo.isEnabled = c != null
+                btnWhereTo.text = if (c != null) "Where to?" else "No city map"
+            }
+        }.start()
+
+        btnWhereTo.setOnClickListener {
+            val c = city ?: return@setOnClickListener
+            if (blackoutOn) {
+                Toast.makeText(this, "Choose the destination before cutting GPS", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val fix = lastAcceptedGps ?: run {
+                Toast.makeText(this, "Waiting for a GPS fix — the route starts from where you are", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            DestinationPicker.show(this, c, fix.latitude, fix.longitude) { place -> planTo(place) }
+        }
+
         btnSaveRoute.setOnClickListener {
             if (blackoutOn) {
                 Toast.makeText(this, "Save the route after GPS is back on", Toast.LENGTH_SHORT).show()
@@ -216,6 +273,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     .format(RouteStore.MIN_ROUTE_M), Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
+            clearPlan()                              // a learned route replaces a planned one
             road = try { RoadBinder(RouteStore.combinedJson(this)) } catch (e: Exception) { null }
             road?.select(0)                          // the route just learned is listed first
             btnRoute.text = road?.selectionLabel() ?: "Route: none"
@@ -270,6 +328,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 blackoutEndMs = System.currentTimeMillis()
                 blackoutToIndex = gpsPoints.size
                 gyroBias.unfreeze()          // GNSS is back: keep learning the bias
+                routeGuard = null; rebinder = null   // GPS checks the route again (off-route detector)
             }
 
             if (isChecked) {
@@ -296,6 +355,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     paths.startPredicted(loc.latitude, loc.longitude)   // a NEW line
                     predPoints.add(loc.latitude to loc.longitude)
                     if (roadBindingOn) bindRoad(loc)
+                    armRouteGuard()
                 }
             }
         }
@@ -377,6 +437,181 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         startGpsUpdates()
     }
 
+    /**
+     * Route from the last good fix to [place], draw it, and bind the dot to it.
+     * From here on the planned route IS the road the blackout rides on.
+     */
+    private fun planTo(place: CityPack.Place, reroute: Boolean = false) {
+        val c = city ?: return
+        val fix = lastAcceptedGps ?: return
+        if (!reroute) btnWhereTo.text = "Routing to ${place.name}…"
+        // Routing searches 34,000 road points: off the main thread, so the screen never freezes.
+        Thread {
+            val r = c.route(fix.latitude, fix.longitude, place.arrive)
+            runOnUiThread { applyRoute(place, fix, r, reroute) }
+        }.start()
+    }
+
+    private fun applyRoute(place: CityPack.Place, fix: Location, r: CityPack.Route?, reroute: Boolean = false) {
+        if (blackoutOn) {                                   // GPS was cut while routing: keep what we had
+            btnWhereTo.text = planned?.let { "→ " + it.label } ?: "Where to?"
+            return
+        }
+        if (r == null || r.points.size < 2) {
+            btnWhereTo.text = planned?.let { "→ " + it.label } ?: "Where to?"
+            Toast.makeText(this, "No road route to ${place.name} from here", Toast.LENGTH_LONG).show()
+            return
+        }
+        clearPlan()
+        val p = PlannedRoute(place, r)
+        planned = p
+        routeLine = p.draw(mapView, zoomToFit = !reroute)
+        road = try { RoadBinder(p.toRouteJson()).also { it.select(0) } } catch (e: Exception) { null }
+        btnRoute.text = road?.selectionLabel() ?: "Route: none"
+        btnWhereTo.text = "→ " + p.label
+        roadBindingOn = true
+        switchRoadBinding.isChecked = true
+        bindRoad(fix)
+
+        val g = RouteGuide(r.points)
+        guide = g
+        routeNodes = r.nodes
+        navigator = Navigator(place.name, g, Maneuver.fromRoute(g, r.nodes) { city?.degree(it) ?: 2 })
+        progressS = 0.0
+        offRoute.reset()
+        if (!reroute) {
+            voice?.say("Route to %s. %.1f kilometres.".format(place.name, p.lengthKm))
+            return
+        }
+        // Re-routed: if the new route starts back the way the rider is going, say so first.
+        val riding = riderHeading()
+        val uTurn = riding != null && g.lengthM > 30 &&
+            Math.abs(Math.toDegrees(Maneuver.wrap(g.heading(0.0, 30.0) - riding))) > U_TURN_DEG
+        voice?.say(if (uTurn) "Re-routing. Make a U-turn." else "Re-routing.")
+        android.util.Log.i("DhruvaNav", "re-routed to ${place.name}: %.0f m, u-turn=$uTurn".format(g.lengthM))
+        tvErrorLabel.text = if (uTurn) "Re-routed · make a U-turn" else "Re-routed"
+    }
+
+    /** At the cut: watch the planned route ahead of the dot for a turn the rider did not follow. */
+    private fun armRouteGuard() {
+        val g = guide; val rb = road
+        routeGuard = null; rebinder = null
+        if (planned == null || g == null || rb == null || !rb.bound || !roadBindingOn) return
+        guardCutArc = rb.arcM
+        val (ax, ay) = g.ahead(guardCutArc)
+        if (ax.size < 2) return
+        routeGuard = RouteGuard(ax, ay)
+        psiSinceCut = 0.0; guardT0 = Double.NaN; guardLastFeed = 0.0
+    }
+
+    private fun watchForWrongTurn(nowS: Double, rb: RoadBinder) {
+        val guard = routeGuard ?: return
+        if (guardT0.isNaN()) guardT0 = nowS
+        val t = nowS - guardT0
+        if (t - guardLastFeed < 0.1 && guard.size > 0) return
+        guardLastFeed = t
+        val since = rb.arcM - guardCutArc
+        if (guard.add(t, since, psiSinceCut)) {
+            voice?.say("Wrong turn.")
+            android.util.Log.i("DhruvaNav", "wrong turn: %.0f m after the cut".format(since))
+            tvErrorLabel.text = "Wrong turn — finding the road you took…"
+            val c = city; val g = guide; val nodes = routeNodes
+            rebinder = if (c != null && g != null && nodes != null) Rebinder(c, g, nodes, guardCutArc, guard).takeIf { it.hasCandidates } else null
+            guardAlarmT = t
+            if (rebinder == null) { tvErrorLabel.text = "Off route — no side road found here"; routeGuard = null }
+            return
+        }
+        val rbd = rebinder ?: return
+        if (since < rbd.readyAtSinceCut && t - guardAlarmT < Rebinder.MAX_WAIT_S) return
+        rebinder = null; routeGuard = null
+        val choice = rbd.choose() ?: return
+        rerouteFromBranch(choice, rb.arcM)
+    }
+
+    /** Put the dot on the road the rider actually took and route from there, still with GPS off. */
+    private fun rerouteFromBranch(choice: Rebinder.Choice, routeArc: Double) {
+        val c = city ?: return; val g = guide ?: return; val p = planned ?: return
+        val (x, y) = choice.road.xyAt(routeArc)
+        val (la, lo) = g.toLatLon(x, y)
+        var k = 0; var bd = Double.MAX_VALUE
+        for (i in 0 until choice.branch.size - 1) {
+            val d = CityPack.metres(la, lo, c.lat[choice.branch[i + 1]], c.lon[choice.branch[i + 1]])
+            if (d < bd) { bd = d; k = i }
+        }
+        val a = choice.branch[k]; val b = choice.branch[k + 1]
+        Thread {
+            val d = c.routeFrom(a, b, la, lo, p.place.arrive)
+            runOnUiThread {
+                if (d == null || !blackoutOn) return@runOnUiThread
+                routeLine?.let { mapView.overlays.remove(it) }
+                val np = PlannedRoute(p.place, d.route)
+                planned = np
+                routeLine = np.draw(mapView, zoomToFit = false)
+                road = try { RoadBinder(np.toRouteJson()).also { it.select(0) } } catch (e: Exception) { null }
+                road?.start(la, lo, null)
+                val ng = RouteGuide(d.route.points)
+                guide = ng; routeNodes = d.route.nodes
+                navigator = Navigator(p.place.name, ng, Maneuver.fromRoute(ng, d.route.nodes) { c.degree(it) })
+                progressS = 0.0
+                armRouteGuard()                            // a second wrong turn is caught too
+                voice?.say(if (d.uTurn) "Re-routing. Make a U-turn." else "Re-routing.")
+                tvErrorLabel.text = "Re-routed from the road you took (gyro %+.0f°)%s".format(choice.gyroDeg, if (d.uTurn) " · make a U-turn" else "")
+                android.util.Log.i("DhruvaNav", "wrong-turn re-route: %.0f m, u-turn=%s, %d candidate road(s), gyro %.0f vs road %.0f"
+                    .format(d.route.lengthM, d.uTurn, choice.candidates, choice.gyroDeg, choice.pathDeg))
+            }
+        }.start()
+    }
+
+    /** Direction the rider is moving (radians, counter-clockwise from east), from the last ~10 m of real fixes. */
+    private fun riderHeading(): Double? {
+        val now = recentFixes.lastOrNull() ?: return null
+        val back = recentFixes.lastOrNull { it.distanceTo(now) >= 10f } ?: return null
+        val (x, y) = toXY(now.latitude, now.longitude, back.latitude, back.longitude)
+        return Math.atan2(y, x)
+    }
+
+    /** With GPS: move along the route, speak the next turn, re-route when we have left it. */
+    private fun guideWithGps(loc: Location) {
+        val g = guide ?: return
+        val nav = navigator ?: return
+        val p = planned ?: return
+        if (nav.arrived) return
+        val pr = g.project(loc.latitude, loc.longitude, progressS)
+        val now = System.currentTimeMillis()
+        if (offRoute.onFix(pr.offM, loc.accuracy) && now - lastRerouteMs > REROUTE_GAP_MS) {
+            lastRerouteMs = now
+            offRoute.reset()
+            tvErrorLabel.text = "Off route (%.0f m) — re-routing".format(pr.offM)
+            planTo(p.place, reroute = true)
+            return
+        }
+        if (pr.offM <= OffRouteDetector.OFF_M) progressS = maxOf(progressS, pr.s)
+        showGuidance(nav.update(progressS, 0.0) { a, d, r -> voice?.phrase(a, d, r) ?: "$a." })
+    }
+
+    private fun showGuidance(u: Navigator.Update) {
+        btnWhereTo.text = u.status
+        u.speak?.let { voice?.say(it); android.util.Log.i("DhruvaNav", "say: $it") }
+    }
+
+    private fun clearPlan() {
+        routeLine?.let { mapView.overlays.remove(it); mapView.invalidate() }
+        routeLine = null
+        planned = null
+        guide = null
+        navigator = null
+        btnWhereTo.text = if (city != null) "Where to?" else btnWhereTo.text
+    }
+
+
+    /** Called by GnssSwitch the moment the mode changes. Part 7 makes this
+     * drive the whole blackout. */
+    private fun onGnssModeChanged(mode: GnssMode, why: String, tMs: Long) {
+        android.util.Log.i("Dhruva", "GNSS mode -> $mode ($why) at $tMs ms")
+        Toast.makeText(this, if (mode == GnssMode.GNSS) "GPS back: $why" else
+            "GPS lost: $why", Toast.LENGTH_SHORT).show()
+    }
+
     /** Writes trip_summary.json next to the ride's sensor files (or
      * files/trips/ if not recording). */
     private fun saveTrip(
@@ -451,7 +686,8 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private fun bindRoad(loc: Location) {
         val rb = road ?: return
         // Bearing decides which way along the route we travel; below ~1 m/s it is noise.
-        val bearing = if (loc.hasBearing() && loc.speed > 1f) loc.bearing else null
+        // A planned route is already in travel order, so it is always ridden forwards.
+        val bearing = if (planned == null && loc.hasBearing() && loc.speed > 1f) loc.bearing else null
         if (rb.start(loc.latitude, loc.longitude, bearing)) {
             tvErrorLabel.text = "bound to %s (%.0f m off, %s)".format(
                 rb.routeName, rb.snapDistanceM, if (rb.direction > 0) "forward" else "reverse")
@@ -470,6 +706,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         // gravity at GAME too: the speed model needs all three streams well above 10 Hz
         gravitySensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         linAccSensor?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+        gnssWatcher?.start()
     }
 
     override fun onDestroy() {
@@ -483,6 +720,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         super.onPause()
         mapView.onPause()
         sm.unregisterListener(this)
+        gnssWatcher?.stop()
         speedAi?.pause()
         // MUST reset. Otherwise the next gyro event after a resume reports a dt
         // of however long the screen was off, and speed * dt teleports the dot
@@ -503,6 +741,14 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         fused.requestLocationUpdates(req, object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
+                // A cached fix from before this screen opened, or a jump no vehicle can make, must
+                // never reach the map, the route or the score.
+                val ageS = (android.os.SystemClock.elapsedRealtimeNanos() - loc.elapsedRealtimeNanos) / 1e9
+                when (fixFilter.check(loc.latitude, loc.longitude, loc.time, ageS)) {
+                    FixFilter.Verdict.STALE, FixFilter.Verdict.GLITCH -> return
+                    FixFilter.Verdict.NEW_TRACK -> { paths.breakTruth(); recentFixes.clear(); lastAcceptedGps = null }
+                    FixFilter.Verdict.ACCEPT -> {}
+                }
 
                 // GPS jitter fix: only treat this fix as real movement if it moved
                 // further than a capped noise floor. Standing still with 15m
@@ -520,6 +766,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                     lastTruthPoint = GeoPoint(loc.latitude, loc.longitude)
                     gpsPoints.add(loc.latitude to loc.longitude)
                 }
+                gnss.onFix(SystemClock.elapsedRealtime(), loc.accuracy)
 
                 if (lat0 == null) {
                     // first fix ever — this becomes the map's local origin
@@ -583,6 +830,9 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                 // only let a real fix move the dot when we are NOT simulating a blackout
                 if (!blackoutOn && isRealMovement) {
                     placeDot(loc.latitude, loc.longitude, isBlue = true, radiusM = 0.0)
+                    recentFixes.addLast(loc)
+                    while (recentFixes.size > 10) recentFixes.removeFirst()
+                    guideWithGps(loc)
                 }
             }
         }, Looper.getMainLooper())
@@ -637,8 +887,11 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                             .format(it.bufferedS)
                 }
             } ?: " · AI speed OFF (model missing)"
+            val gnssNote = " · " + (if (gnss.mode == GnssMode.GNSS) "GNSS"
+            else "DR: ${gnss.reason}") +
+                    (if (gnss.satellitesUsed >= 0) " (${gnss.satellitesUsed} sats)" else "")
             tvSensorStatus.text =
-                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + truthNote
+                (if (paths.dropped > 0) "$bias · ${paths.dropped} BAD FRAMES" else bias) + aiNote + gnssNote + truthNote
         }
 
         if (!blackoutOn) return   // only drive the dot with dead reckoning during a simulated blackout
@@ -676,6 +929,21 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         placeDot(lat, lon, isBlue = false, radiusM = radius)
 
+        // Wrong turn with GPS off: integrate the gyro, feed the route guard 10 times a second.
+        psiSinceCut += yawRate * dt
+        if (routeGuard != null && rb != null && rb.bound) watchForWrongTurn(nowS, rb)
+
+        // Keep guiding with GPS off: the dot's distance along the planned route drives the voice.
+        val nav = navigator
+        if (nav != null && planned != null && roadBindingOn && rb != null && rb.bound) {
+            val nowMs = System.currentTimeMillis()
+            if (nowMs - lastGuideMs >= 1000L) {
+                lastGuideMs = nowMs
+                progressS = rb.arcM
+                showGuidance(nav.update(progressS, radius) { a, d, r -> voice?.phrase(a, d, r) ?: "$a." })
+            }
+        }
+
         // Guide 3 add-on: predicted track + live divergence label
         paths.addPredicted(lat, lon)
         predPoints.add(lat to lon)
@@ -689,6 +957,13 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    companion object {
+        /** No second re-route within this: a fresh route needs a few fixes to settle. */
+        const val REROUTE_GAP_MS = 8_000L
+        /** The new route starts this far from the way the rider is going: a U-turn. */
+        const val U_TURN_DEG = 120.0
+    }
 
     private fun placeDot(lat: Double, lon: Double, isBlue: Boolean, radiusM: Double) {
         val point = GeoPoint(lat, lon)
