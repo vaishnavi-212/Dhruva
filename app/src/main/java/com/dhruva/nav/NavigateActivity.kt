@@ -637,12 +637,18 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         // Anchor to where we are, facing the way we are facing.
         lastAcceptedGps?.let { loc ->
             if (loc.hasBearing()) deadReckoner?.setHeadingFromBearing(loc.bearing)
-            paths.startPredicted(loc.latitude, loc.longitude) // a NEW line
-            predPoints.add(loc.latitude to loc.longitude)
             if (roadBindingOn) {
                 bindRoad(loc)
                 roadArcNear = road?.arcM ?: Double.NaN
             }
+            // Start the predicted line WHERE THE DOT STARTS. Bound to a road, that is the point on the
+            // road, which can be 100 m from the fix; anchoring at the fix made every later point look
+            // like a >100 m jump and the overlay rejected them all ("BAD FRAMES", 22 Sept).
+            val rb0 = road
+            val start = if (roadBindingOn && rb0 != null && rb0.bound) rb0.at(rb0.arcM)
+                        else loc.latitude to loc.longitude
+            paths.startPredicted(start.first, start.second) // a NEW line
+            predPoints.add(start)
             // Watch the planned route from here: with GPS off only the gyro can tell us
             // the rider has taken a different road.
             armRouteGuard()
