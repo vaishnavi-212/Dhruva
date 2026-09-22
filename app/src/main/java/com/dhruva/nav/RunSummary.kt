@@ -24,6 +24,9 @@ import kotlin.math.sqrt
 object RunSummary {
 
     private const val R = 6378137.0
+    /** Below this, a blackout is too short to score a drift percentage on. */
+    const val MIN_SCORABLE_M = 20.0
+
     private const val ISRO_LIMIT_PCT = 10.0
     /** measured on 11 rides: 1-sigma is ~19% of distance since the last fix */
     private const val SIGMA_PER_METRE = 0.19
@@ -102,7 +105,12 @@ object RunSummary {
     }
 
     /** One-line verdict for the top of the summary card. */
-    fun verdict(r: Result): String =
-        if (r.passes) "PASS — %.1f%% drift, inside ISRO's 10%% limit".format(r.driftPct)
-        else "FAIL — %.1f%% drift, over ISRO's 10%% limit".format(r.driftPct)
+    fun verdict(r: Result): String = when {
+        // Too little riding without GPS to divide by: "FAIL - 0.0% drift" contradicts itself
+        // (22 Sept, a 1.5 s blackout with the phone standing still).
+        r.distanceM < MIN_SCORABLE_M ->
+            "NOT SCORABLE — only %.0f m ridden without GPS".format(r.distanceM)
+        r.passes -> "PASS — %.1f%% drift, inside ISRO's 10%% limit".format(r.driftPct)
+        else -> "FAIL — %.1f%% drift, over ISRO's 10%% limit".format(r.driftPct)
+    }
 }
