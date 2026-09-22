@@ -71,6 +71,7 @@ class LivePathOverlay(private val map: MapView) {
         current = seg
 
         armed = true
+        dropped = 0                       // per blackout: a count from an earlier one tells you nothing
         val p = GeoPoint(lat, lon)
         lastPred = p
         seg.addPoint(p)
