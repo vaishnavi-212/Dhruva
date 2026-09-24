@@ -227,6 +227,10 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         gravitySensor = sm.getDefaultSensor(Sensor.TYPE_GRAVITY)
         linAccSensor = sm.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         speedAi = try { SpeedEstimator(this) } catch (e: Exception) { null }
+        // Warm from the start. The model needs 30 s of sensors before its first answer; starting it
+        // only at the cut meant the first 30 s of every blackout ran on a guessed held speed
+        // (24 Sept: held 32 km/h against a real 24 km/h). It costs ~15 ms twice a second.
+        speedAi?.setActive(true)
         gnss = GnssSwitch(onChange = { mode, why, tMs ->
             onGnssModeChanged(mode, why, tMs) })
         gnssWatcher = GnssWatcher(this, gnss)
@@ -240,7 +244,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
 
         tvSensorStatus.setOnLongClickListener {
             benchmark = !benchmark
-            speedAi?.setActive(benchmark || blackoutOn)
+            speedAi?.setActive(true)
 
             Toast.makeText(
                 this,
@@ -485,6 +489,13 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
         val g = guide; val rb = road
         routeGuard = null; rebinder = null
         if (planned == null || g == null || rb == null || !rb.bound || !roadBindingOn) return
+        // An unmeasured gyro bias drifts the heading and the guard fires on its own drift: three
+        // alarms in 1.2 km on 24 Sept, each one moving the dot onto a road nobody took.
+        if (!gyroBias.ready) {
+            tvErrorLabel.text = "Wrong-turn alarm off — gyro bias was never measured (stand still 5 s with GPS on)"
+            android.util.Log.i("DhruvaNav", "route guard NOT armed: gyro bias never measured")
+            return
+        }
         guardCutArc = rb.arcM
         val (ax, ay) = g.ahead(guardCutArc)
         if (ax.size < 2) return
@@ -659,7 +670,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
     private fun exitBlackout() {
         if (!blackoutOn) return
         blackoutOn = false
-        speedAi?.setActive(benchmark)
+        speedAi?.setActive(true)                 // stays warm for the next blackout
         tvMode.text = "Mode: GNSS"
         paths.setBlackout(false)
         // "0 m apart" while GNSS is healthy is not a result -- there is no
@@ -1025,7 +1036,7 @@ class NavigateActivity : AppCompatActivity(), SensorEventListener {
                             .format(it.speedMps * 3.6, it.lastInferMs)
 
                     it.ready ->
-                        " · AI speed ready (runs when GPS is lost)"
+                        " · AI speed ready (warm)"
 
                     else ->
                         " · AI speed warming up %.0f/30 s"
