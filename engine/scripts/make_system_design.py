@@ -16,15 +16,21 @@ LTEAL, LAMBER, LBLUE, LGREY = "#E4F2EF", "#FBF1E1", "#EAF2FA", "#F2F4F7"
 plt.rcParams.update({"font.family": "Avenir Next", "savefig.dpi": 200})
 
 fig = plt.figure(figsize=(13, 7.3)); ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, 100); ax.set_ylim(0, 56.15); ax.axis("off")
-fig.text(0.04, 0.955, "Dhruva at scale: navigation on the phone, learning in the cloud", fontsize=20, fontweight="demibold",
+fig.text(0.04, 0.955, "Dhruva at scale: navigation on the phone, a shared map in the cloud", fontsize=20, fontweight="demibold",
          color=INK, va="top")
-fig.text(0.04, 0.895, "Every phone navigates by itself, offline. The cloud only improves the shared map and the speed model, "
-         "from small opt-in uploads.", fontsize=12, color=MUTED, va="top")
+fig.text(0.04, 0.895, "Every phone navigates by itself, offline. The cloud has one job: merge the roads riders agree on "
+         "into a shared map, and publish it back.", fontsize=12, color=MUTED, va="top")
 
 
 def box(x, y, w, h, fill, edge=None, dashed=False, r=1.0, lw=1.4):
     ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={r}", fc=fill,
                                 ec=edge or fill, lw=lw, ls=(0, (4, 3)) if dashed else "-"))
+
+
+def step(x, y, n, color=INK):
+    """A numbered step of the trip, in order."""
+    ax.add_patch(plt.Circle((x, y), 1.25, fc=color, ec="white", lw=1.5, zorder=5))
+    ax.text(x, y, str(n), fontsize=10, fontweight="demibold", color="white", ha="center", va="center", zorder=6)
 
 
 def arrow(x0, y0, x1, y1, color=INK, lw=2.0):
@@ -51,29 +57,36 @@ for i, (name, desc, col) in enumerate(layers):
     box(4.2, y, 51.4, 4.7, col)
     ax.text(6.0, y + 2.35, name, fontsize=11, fontweight="demibold", color=INK, va="center")
     ax.text(16.0, y + 2.35, desc, fontsize=9.8, color=INK, va="center")
-ax.text(4.2, 14.4, "Vehicle unit (optional): the same engine on a 200 Hz IMU box, for buses, ambulances and convoys",
+ax.text(4.2, 14.4, "The AI model ships inside the app and improves with app updates. Also runs on a vehicle IMU box.",
         fontsize=9.2, color=MUTED, va="center", style="italic")
 
 # ------------------------------------------------------------------ CLOUD
 box(70.5, 13.2, 27, 34.5, LBLUE)
 ax.text(72.2, 45.6, "IN THE CLOUD — optional, batch", fontsize=11, fontweight="demibold", color=NAVY, va="center")
-cloud = [("Map merge", "a road is promoted only when 3+\ncontributions agree (median)"),
-         ("Model training", "retrain speed on many phones;\nship only if it beats the benchmark"),
-         ("Region packs", "versioned city packs + models,\nstaged rollout, rollback")]
+cloud = [("Map merge", "waits until 3 riders agree on a\nroad, takes the median, adds it\nto the shared map"),
+         ("City packs", "one per city, ~2 MB, versioned;\nstatic files, no always-on\nserver needed")]
 for i, (name, desc) in enumerate(cloud):
-    y = 35.4 - i * 9.4
-    box(72.2, y, 23.6, 8.0, "white", edge="#B7CFE6")
-    ax.text(73.6, y + 5.9, name, fontsize=11, fontweight="demibold", color=NAVY, va="center")
-    ax.text(73.6, y + 2.8, desc, fontsize=9.1, color=INK, va="center", linespacing=1.2)
+    y = 31.0 - i * 13.0
+    box(72.2, y, 23.6, 11.2, "white", edge="#B7CFE6")
+    ax.text(73.6, y + 8.6, name, fontsize=11.5, fontweight="demibold", color=NAVY, va="center")
+    ax.text(73.6, y + 4.0, desc, fontsize=9.3, color=INK, va="center", linespacing=1.25)
 
 # ------------------------------------------------------------------ sync arrows
 arrow(57.8, 33.0, 70.2, 33.0, color=AMBER, lw=2.2)
-ax.text(64.0, 36.9, "UP  (opt-in, wifi)", fontsize=9.5, fontweight="demibold", color="#9A6418", ha="center", va="center")
+ax.text(60.9, 36.9, "UP  (opt-in, wifi)", fontsize=9.5, fontweight="demibold", color="#9A6418", ha="left", va="center")
 ax.text(64.0, 34.6, "road evidence 0.21 KB/km", fontsize=9.2, color=INK, ha="center", va="center")
 ax.text(64.0, 30.9, "no trips, no identity,\nends trimmed", fontsize=8.6, color=MUTED, ha="center", va="center", linespacing=1.15)
 arrow(70.2, 24.0, 57.8, 24.0, color=NAVY, lw=2.2)
-ax.text(64.0, 27.2, "DOWN", fontsize=9.5, fontweight="demibold", color=NAVY, ha="center", va="center")
-ax.text(64.0, 21.6, "city pack ~2 MB,\nmodel updates", fontsize=9.2, color=INK, ha="center", va="center", linespacing=1.15)
+ax.text(60.9, 27.2, "DOWN  (on wifi)", fontsize=9.5, fontweight="demibold", color=NAVY, ha="left", va="center")
+ax.text(64.0, 21.6, "updated city pack\n~2 MB", fontsize=9.2, color=INK, ha="center", va="center", linespacing=1.15)
+
+# the trip, in order
+step(71.4, 27.8, 1, NAVY)        # 1 download the city pack
+step(3.6, 43.4, 2, TEAL)         # 2 navigate offline
+step(3.6, 29.9, 3, TEAL)         # 3 learn your road (personal layer)
+step(59.2, 36.9, 4, AMBER)       # 4 upload the road shape
+step(71.4, 40.6, 5, NAVY)        # 5 merge when 3 agree
+step(59.2, 27.2, 6, NAVY)        # 6 everyone gets it
 
 # ------------------------------------------------------------------ evidence strip
 facts = [("0", "server calls to navigate:\ncloud cost does not grow with users"),
